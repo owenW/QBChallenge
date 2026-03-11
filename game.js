@@ -1,84 +1,281 @@
 // ============================================================
-// QB Challenge - 像素腰旗橄榄球 Roguelike
+// QB Challenge v2 - 像素腰旗橄榄球 Roguelike
+// Creative Director Review: Full rewrite with juice, depth, style
 // ============================================================
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// --- Constants ---
-const FIELD_W = 480;
-const FIELD_H = 640;
-const SCALE = 1;
-canvas.width = FIELD_W;
-canvas.height = FIELD_H;
+// --- Canvas Setup ---
+const W = 540;
+const H = 720;
+canvas.width = W;
+canvas.height = H;
 
-// Resize canvas to fit screen while keeping aspect ratio
 function resizeCanvas() {
-    const maxH = window.innerHeight - 20;
-    const maxW = window.innerWidth - 20;
-    const ratio = FIELD_W / FIELD_H;
-    let w, h;
-    if (maxW / maxH > ratio) {
-        h = maxH;
-        w = h * ratio;
-    } else {
-        w = maxW;
-        h = w / ratio;
-    }
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
+    const maxH = window.innerHeight - 10;
+    const maxW = window.innerWidth - 10;
+    const ratio = W / H;
+    let cw, ch;
+    if (maxW / maxH > ratio) { ch = maxH; cw = ch * ratio; }
+    else { cw = maxW; ch = cw / ratio; }
+    canvas.style.width = cw + 'px';
+    canvas.style.height = ch + 'px';
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// Field dimensions in game units
-const YARD_PX = 16; // pixels per yard
-const LOS_Y = 400;  // line of scrimmage Y position
-const ENDZONE_Y = 80;
+// ============================================================
+// SOUND ENGINE (Web Audio API - 8-bit)
+// ============================================================
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
 
-// Colors
-const C = {
-    field: '#2d8a4e',
-    fieldDark: '#267a43',
-    line: '#ffffff',
-    lineFaint: 'rgba(255,255,255,0.3)',
-    endzone: '#c0392b',
-    endzoneText: 'rgba(255,255,255,0.15)',
-    offenseMain: '#2980b9',
-    offenseLight: '#5dade2',
-    defenseMain: '#e74c3c',
-    defenseLight: '#f1948a',
-    qb: '#f39c12',
-    ball: '#8B4513',
-    highlight: '#f1c40f',
-    highlightGood: '#2ecc71',
-    highlightBad: '#e74c3c',
-    hud: '#16213e',
-    hudText: '#eee',
-    accent: '#e94560',
-    gold: '#ffd700',
-    darkOverlay: 'rgba(0,0,0,0.7)',
-    buttonBg: '#0f3460',
-    buttonHover: '#e94560',
+function initAudio() {
+    if (!audioCtx) audioCtx = new AudioCtx();
+}
+
+function playSound(type) {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    switch(type) {
+        case 'snap':
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.linearRampToValueAtTime(80, now + 0.06);
+            gain.gain.setValueAtTime(0.15, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.08);
+            osc.start(now); osc.stop(now + 0.08);
+            break;
+        case 'throw':
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(300, now);
+            osc.frequency.linearRampToValueAtTime(900, now + 0.15);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.2);
+            osc.start(now); osc.stop(now + 0.2);
+            break;
+        case 'catch':
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(523, now);
+            gain.gain.setValueAtTime(0.12, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.1);
+            osc.start(now); osc.stop(now + 0.1);
+            const osc2 = audioCtx.createOscillator();
+            const g2 = audioCtx.createGain();
+            osc2.connect(g2); g2.connect(audioCtx.destination);
+            osc2.type = 'triangle';
+            osc2.frequency.setValueAtTime(659, now + 0.1);
+            g2.gain.setValueAtTime(0.12, now + 0.1);
+            g2.gain.linearRampToValueAtTime(0, now + 0.25);
+            osc2.start(now + 0.1); osc2.stop(now + 0.25);
+            break;
+        case 'fail':
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.linearRampToValueAtTime(120, now + 0.25);
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.3);
+            osc.start(now); osc.stop(now + 0.3);
+            break;
+        case 'td':
+            const notes = [523, 659, 784, 1047];
+            notes.forEach((freq, i) => {
+                const o = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                o.connect(g); g.connect(audioCtx.destination);
+                o.type = 'square';
+                o.frequency.setValueAtTime(freq, now + i * 0.12);
+                g.gain.setValueAtTime(0.1, now + i * 0.12);
+                g.gain.linearRampToValueAtTime(0, now + i * 0.12 + 0.15);
+                o.start(now + i * 0.12); o.stop(now + i * 0.12 + 0.15);
+            });
+            break;
+        case 'select':
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(440, now);
+            osc.frequency.linearRampToValueAtTime(660, now + 0.05);
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.08);
+            osc.start(now); osc.stop(now + 0.08);
+            break;
+        case 'tick':
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(800, now);
+            gain.gain.setValueAtTime(0.04, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.03);
+            osc.start(now); osc.stop(now + 0.03);
+            break;
+        case 'warning':
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.setValueAtTime(300, now + 0.1);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.2);
+            osc.start(now); osc.stop(now + 0.2);
+            break;
+    }
+}
+
+// ============================================================
+// PARTICLE SYSTEM
+// ============================================================
+let particles = [];
+
+function spawnParticles(x, y, count, color, speed, life, size) {
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const spd = speed * (0.5 + Math.random() * 0.5);
+        particles.push({
+            x, y,
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd - speed * 0.3,
+            life: life * (0.7 + Math.random() * 0.3),
+            maxLife: life,
+            color: Array.isArray(color) ? color[Math.floor(Math.random() * color.length)] : color,
+            size: size || 2,
+            gravity: 0.15,
+        });
+    }
+}
+
+function spawnConfetti(x, y) {
+    const colors = ['#ffd700', '#e94560', '#2ecc71', '#5dade2', '#fff', '#f39c12'];
+    for (let i = 0; i < 40; i++) {
+        particles.push({
+            x: x + (Math.random() - 0.5) * 200,
+            y: y - 50,
+            vx: (Math.random() - 0.5) * 4,
+            vy: -Math.random() * 4 - 1,
+            life: 2 + Math.random(),
+            maxLife: 3,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            size: 2 + Math.floor(Math.random() * 3),
+            gravity: 0.08,
+        });
+    }
+}
+
+function spawnTrail(x, y, color) {
+    particles.push({
+        x, y, vx: 0, vy: 0,
+        life: 0.15, maxLife: 0.15,
+        color, size: 3, gravity: 0,
+    });
+}
+
+function updateParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += p.gravity;
+        p.life -= dt;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+}
+
+function drawParticles() {
+    for (const p of particles) {
+        const alpha = Math.max(0, p.life / p.maxLife);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(Math.round(p.x) - p.size/2, Math.round(p.y) - p.size/2, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// SCREEN SHAKE
+// ============================================================
+let shake = { x: 0, y: 0, intensity: 0, duration: 0, timer: 0 };
+
+function triggerShake(intensity, duration) {
+    shake.intensity = intensity;
+    shake.duration = duration;
+    shake.timer = 0;
+}
+
+function updateShake(dt) {
+    if (shake.timer < shake.duration) {
+        shake.timer += dt;
+        const progress = shake.timer / shake.duration;
+        const decay = 1 - progress;
+        shake.x = (Math.random() - 0.5) * 2 * shake.intensity * decay;
+        shake.y = (Math.random() - 0.5) * 2 * shake.intensity * decay;
+    } else {
+        shake.x = 0;
+        shake.y = 0;
+    }
+}
+
+// ============================================================
+// CAMERA
+// ============================================================
+let camera = { x: 0, y: 0, zoom: 1, targetY: 0, targetZoom: 1, breathTimer: 0 };
+
+function updateCamera(dt) {
+    camera.breathTimer += dt;
+    // Breathing sway in choosing phase
+    if (gameState === 'preSnap' || gameState === 'choosing') {
+        camera.y = Math.sin(camera.breathTimer * 1.5) * 1;
+    }
+    // Smooth follow
+    camera.y += (camera.targetY - camera.y) * 0.05;
+    camera.zoom += (camera.targetZoom - camera.zoom) * 0.05;
+}
+
+// ============================================================
+// CONSTANTS & COLORS
+// ============================================================
+const LOS_Y = 420;
+const ENDZONE_Y = 80;
+const ENDZONE_H = 80;
+const YARD_PX = 16;
+
+const PAL = {
+    field1: '#2d8a4e', field2: '#3ca55e',
+    fieldDark1: '#267a43', fieldDark2: '#33994d',
+    endzone1: '#8B2252', endzone2: '#a02a62',
+    line: '#ffffff', lineGhost: 'rgba(255,255,255,0.25)',
+    losLine: '#ffff44',
+    firstDown: '#ff7722',
+    offBody: '#1B3A5C', offLight: '#5B9BD5', offWhite: '#F0F0F0',
+    defBody: '#8B2252', defLight: '#E74C3C', defDark: '#1A1A1A',
+    qbGold: '#D4A017', qbBody: '#1B3A5C',
+    ball: '#8B4513', ballLace: '#fff',
+    skin: '#fdd5b1',
+    highlight: '#ffd700',
+    good: '#2ecc71', bad: '#e74c3c',
+    hud: '#0a0a2a', hudBorder: '#e94560',
+    accent: '#e94560', gold: '#ffd700',
+    dark: 'rgba(0,0,0,0.75)',
+    cardBg: '#0f1a3a', cardBorder: '#2a4080',
 };
 
 // ============================================================
 // GAME STATE
 // ============================================================
-let gameState = 'title'; // title, formation, choosing, simulation, result, upgrade, gameOver, victory
+let gameState = 'title';
 let currentLevel = 1;
-let maxLevel = 10;
+const maxLevel = 10;
 let score = 0;
-let downs = { current: 1, yardsToGo: 20, ballPosition: 0 }; // ballPosition: yards gained toward endzone
+let downs = { current: 1, yardsToGo: 20, ballPosition: 0 };
 
-// Player stats
-let qbStats = {
-    accuracy: 70,    // base throw accuracy %
-    armStrength: 60,  // affects deep throws
-    readSpeed: 0,     // bonus time to read defense (not used as timer, but affects hints)
-    level: 1,
-};
+// Read timer
+let readTimer = 0;
+let readTimerMax = 4.0;
+let readTimerWarning = false;
 
+// QB stats
+let qbStats = { accuracy: 70, armStrength: 60, readSpeed: 0, level: 1 };
+
+// WR stats
 let wrStats = [
     { id: 0, name: 'WR1', speed: 60, catching: 65, routeRunning: 60, level: 1 },
     { id: 1, name: 'WR2', speed: 55, catching: 60, routeRunning: 65, level: 1 },
@@ -86,185 +283,268 @@ let wrStats = [
     { id: 3, name: 'WR4', speed: 50, catching: 70, routeRunning: 60, level: 1 },
 ];
 
-let defBuffs = [];  // active defense buffs
-let offDebuffs = []; // debuffs applied to defense (beneficial for offense)
+// Relics
+let relics = [];
 
-// Level scaling
+// Buffs/debuffs
+let defBuffs = [];
+let offDebuffs = [];
+
+// Defense disguise
+let defenseDisguised = false;
+let defenseRealFormation = null;
+let defenseShownFormation = null;
+
 function getDefenseBonus() {
-    return (currentLevel - 1) * 5 + defBuffs.reduce((s, b) => s + b.value, 0);
+    return (currentLevel - 1) * 6 + defBuffs.reduce((s, b) => s + b.value, 0);
+}
+
+function getReadTimerMax() {
+    let base = Math.max(2.0, 4.0 - (currentLevel - 1) * 0.2);
+    base += qbStats.readSpeed * 0.15;
+    if (hasRelic('filmStudy')) base += 0.5;
+    return base;
+}
+
+function hasRelic(id) {
+    return relics.some(r => r.id === id);
 }
 
 // ============================================================
 // FORMATIONS
 // ============================================================
-
-// Offense formations - positions relative to field center (240) and LOS
 const offenseFormations = [
     {
         name: 'Shotgun Spread',
-        qb: { x: 240, y: LOS_Y + 40 },
+        qb: { x: 270, y: LOS_Y + 50 },
         wrs: [
             { x: 60,  y: LOS_Y - 5,  route: 'streak' },
-            { x: 140, y: LOS_Y + 10, route: 'slant' },
-            { x: 340, y: LOS_Y + 10, route: 'out' },
-            { x: 420, y: LOS_Y - 5,  route: 'post' },
+            { x: 160, y: LOS_Y + 10, route: 'slant' },
+            { x: 380, y: LOS_Y + 10, route: 'out' },
+            { x: 480, y: LOS_Y - 5,  route: 'post' },
         ]
     },
     {
         name: 'Trips Right',
-        qb: { x: 200, y: LOS_Y + 40 },
+        qb: { x: 220, y: LOS_Y + 50 },
         wrs: [
             { x: 60,  y: LOS_Y - 5,  route: 'curl' },
-            { x: 300, y: LOS_Y + 5,  route: 'slant' },
-            { x: 360, y: LOS_Y - 5,  route: 'out' },
-            { x: 420, y: LOS_Y + 5,  route: 'streak' },
+            { x: 340, y: LOS_Y + 5,  route: 'slant' },
+            { x: 400, y: LOS_Y - 5,  route: 'out' },
+            { x: 460, y: LOS_Y + 5,  route: 'streak' },
         ]
     },
     {
         name: 'Trips Left',
-        qb: { x: 280, y: LOS_Y + 40 },
+        qb: { x: 320, y: LOS_Y + 50 },
         wrs: [
-            { x: 60,  y: LOS_Y + 5,  route: 'streak' },
-            { x: 120, y: LOS_Y - 5,  route: 'out' },
-            { x: 180, y: LOS_Y + 5,  route: 'slant' },
-            { x: 420, y: LOS_Y - 5,  route: 'curl' },
+            { x: 80,  y: LOS_Y + 5,  route: 'streak' },
+            { x: 140, y: LOS_Y - 5,  route: 'out' },
+            { x: 200, y: LOS_Y + 5,  route: 'slant' },
+            { x: 480, y: LOS_Y - 5,  route: 'curl' },
         ]
     },
     {
         name: 'Bunch Right',
-        qb: { x: 200, y: LOS_Y + 40 },
+        qb: { x: 220, y: LOS_Y + 50 },
         wrs: [
             { x: 60,  y: LOS_Y - 5,  route: 'post' },
-            { x: 320, y: LOS_Y + 5,  route: 'flat' },
-            { x: 340, y: LOS_Y - 10, route: 'slant' },
-            { x: 360, y: LOS_Y + 5,  route: 'streak' },
+            { x: 360, y: LOS_Y + 5,  route: 'flat' },
+            { x: 385, y: LOS_Y - 12, route: 'slant' },
+            { x: 410, y: LOS_Y + 5,  route: 'streak' },
         ]
     },
     {
-        name: 'Empty Spread',
-        qb: { x: 240, y: LOS_Y + 45 },
+        name: 'Empty Wide',
+        qb: { x: 270, y: LOS_Y + 55 },
         wrs: [
             { x: 50,  y: LOS_Y - 5,  route: 'streak' },
-            { x: 160, y: LOS_Y + 5,  route: 'drag' },
-            { x: 320, y: LOS_Y + 5,  route: 'drag' },
-            { x: 430, y: LOS_Y - 5,  route: 'streak' },
+            { x: 170, y: LOS_Y + 5,  route: 'drag' },
+            { x: 370, y: LOS_Y + 5,  route: 'drag' },
+            { x: 490, y: LOS_Y - 5,  route: 'streak' },
         ]
     },
     {
         name: 'Slot Left',
-        qb: { x: 260, y: LOS_Y + 40 },
+        qb: { x: 290, y: LOS_Y + 50 },
         wrs: [
             { x: 60,  y: LOS_Y - 5,  route: 'post' },
-            { x: 160, y: LOS_Y + 5,  route: 'slant' },
-            { x: 350, y: LOS_Y + 5,  route: 'curl' },
-            { x: 430, y: LOS_Y - 5,  route: 'out' },
+            { x: 170, y: LOS_Y + 5,  route: 'slant' },
+            { x: 390, y: LOS_Y + 5,  route: 'curl' },
+            { x: 490, y: LOS_Y - 5,  route: 'out' },
+        ]
+    },
+    {
+        name: 'Doubles',
+        qb: { x: 270, y: LOS_Y + 50 },
+        wrs: [
+            { x: 70,  y: LOS_Y - 5,  route: 'corner' },
+            { x: 160, y: LOS_Y + 8,  route: 'flat' },
+            { x: 380, y: LOS_Y + 8,  route: 'slant' },
+            { x: 470, y: LOS_Y - 5,  route: 'post' },
         ]
     },
 ];
 
-// Defense formations
 const defenseFormations = [
     {
-        name: 'Cover 1',
-        desc: '人盯人+1自由安全卫',
-        rusher: { x: 240, y: LOS_Y - 15 },
+        name: 'Cover 1', desc: '人盯人 + 自由安全卫',
+        rusher: { x: 270, y: LOS_Y - 15 },
         dbs: [
             { x: 80,  y: LOS_Y - 50, role: 'man', coverIdx: 0 },
-            { x: 180, y: LOS_Y - 50, role: 'man', coverIdx: 1 },
-            { x: 300, y: LOS_Y - 50, role: 'man', coverIdx: 2 },
-            { x: 400, y: LOS_Y - 50, role: 'free', coverIdx: -1 },
+            { x: 200, y: LOS_Y - 50, role: 'man', coverIdx: 1 },
+            { x: 340, y: LOS_Y - 50, role: 'man', coverIdx: 2 },
+            { x: 450, y: LOS_Y - 50, role: 'free', coverIdx: -1 },
         ]
     },
     {
-        name: 'Cover 2 Zone',
-        desc: '两深区域防守',
-        rusher: { x: 240, y: LOS_Y - 15 },
+        name: 'Cover 2 Zone', desc: '两深区域防守',
+        rusher: { x: 270, y: LOS_Y - 15 },
         dbs: [
-            { x: 120, y: LOS_Y - 100, role: 'deep', coverIdx: -1 },
-            { x: 360, y: LOS_Y - 100, role: 'deep', coverIdx: -1 },
-            { x: 140, y: LOS_Y - 40,  role: 'flat', coverIdx: -1 },
-            { x: 340, y: LOS_Y - 40,  role: 'flat', coverIdx: -1 },
+            { x: 140, y: LOS_Y - 110, role: 'deep', coverIdx: -1 },
+            { x: 400, y: LOS_Y - 110, role: 'deep', coverIdx: -1 },
+            { x: 160, y: LOS_Y - 40,  role: 'flat', coverIdx: -1 },
+            { x: 380, y: LOS_Y - 40,  role: 'flat', coverIdx: -1 },
         ]
     },
     {
-        name: 'Cover 3 Zone',
-        desc: '三深区域防守',
-        rusher: { x: 240, y: LOS_Y - 15 },
+        name: 'Cover 3', desc: '三深区域防守',
+        rusher: { x: 270, y: LOS_Y - 15 },
         dbs: [
-            { x: 100, y: LOS_Y - 110, role: 'deep', coverIdx: -1 },
-            { x: 240, y: LOS_Y - 120, role: 'deep', coverIdx: -1 },
-            { x: 380, y: LOS_Y - 110, role: 'deep', coverIdx: -1 },
-            { x: 240, y: LOS_Y - 40,  role: 'flat', coverIdx: -1 },
+            { x: 110, y: LOS_Y - 120, role: 'deep', coverIdx: -1 },
+            { x: 270, y: LOS_Y - 130, role: 'deep', coverIdx: -1 },
+            { x: 430, y: LOS_Y - 120, role: 'deep', coverIdx: -1 },
+            { x: 270, y: LOS_Y - 40,  role: 'flat', coverIdx: -1 },
         ]
     },
     {
-        name: 'Cover 4',
-        desc: '四深区域防守',
-        rusher: { x: 240, y: LOS_Y - 15 },
+        name: 'Cover 4', desc: '四深区域防守',
+        rusher: { x: 270, y: LOS_Y - 15 },
         dbs: [
-            { x: 80,  y: LOS_Y - 90, role: 'deep', coverIdx: -1 },
-            { x: 190, y: LOS_Y - 90, role: 'deep', coverIdx: -1 },
-            { x: 290, y: LOS_Y - 90, role: 'deep', coverIdx: -1 },
-            { x: 400, y: LOS_Y - 90, role: 'deep', coverIdx: -1 },
+            { x: 90,  y: LOS_Y - 100, role: 'deep', coverIdx: -1 },
+            { x: 210, y: LOS_Y - 100, role: 'deep', coverIdx: -1 },
+            { x: 330, y: LOS_Y - 100, role: 'deep', coverIdx: -1 },
+            { x: 450, y: LOS_Y - 100, role: 'deep', coverIdx: -1 },
         ]
     },
     {
-        name: 'Man Blitz',
-        desc: '全人盯人+快速冲传',
-        rusher: { x: 240, y: LOS_Y - 10, fast: true },
+        name: 'Man Blitz', desc: '全人盯人 + 快速冲传',
+        rusher: { x: 270, y: LOS_Y - 10, fast: true },
         dbs: [
-            { x: 80,  y: LOS_Y - 30, role: 'man', coverIdx: 0 },
-            { x: 180, y: LOS_Y - 30, role: 'man', coverIdx: 1 },
-            { x: 300, y: LOS_Y - 30, role: 'man', coverIdx: 2 },
-            { x: 400, y: LOS_Y - 30, role: 'man', coverIdx: 3 },
+            { x: 90,  y: LOS_Y - 30, role: 'man', coverIdx: 0 },
+            { x: 200, y: LOS_Y - 30, role: 'man', coverIdx: 1 },
+            { x: 340, y: LOS_Y - 30, role: 'man', coverIdx: 2 },
+            { x: 450, y: LOS_Y - 30, role: 'man', coverIdx: 3 },
+        ]
+    },
+    {
+        name: 'Cover 6', desc: '混合区域防守',
+        rusher: { x: 270, y: LOS_Y - 15 },
+        dbs: [
+            { x: 110, y: LOS_Y - 110, role: 'deep', coverIdx: -1 },
+            { x: 430, y: LOS_Y - 90,  role: 'deep', coverIdx: -1 },
+            { x: 160, y: LOS_Y - 40,  role: 'flat', coverIdx: -1 },
+            { x: 380, y: LOS_Y - 60,  role: 'deep', coverIdx: -1 },
         ]
     },
 ];
 
-// Route definitions: how each route moves from start position
 const routePaths = {
-    streak:  (sx, sy) => [{ x: sx, y: sy - 160 }],
-    slant:   (sx, sy) => [{ x: sx + (sx < 240 ? 60 : -60), y: sy - 100 }],
-    out:     (sx, sy) => [{ x: sx, y: sy - 60 }, { x: sx + (sx < 240 ? -70 : 70), y: sy - 60 }],
-    post:    (sx, sy) => [{ x: sx, y: sy - 70 }, { x: sx + (sx < 240 ? 50 : -50), y: sy - 160 }],
-    curl:    (sx, sy) => [{ x: sx, y: sy - 80 }, { x: sx + (sx < 240 ? -15 : 15), y: sy - 70 }],
-    flat:    (sx, sy) => [{ x: sx + (sx < 240 ? -50 : 50), y: sy - 20 }],
-    drag:    (sx, sy) => [{ x: sx + (sx < 240 ? 120 : -120), y: sy - 30 }],
-    corner:  (sx, sy) => [{ x: sx, y: sy - 60 }, { x: sx + (sx < 240 ? -60 : 60), y: sy - 140 }],
+    streak:  (sx, sy) => [{ x: sx, y: sy - 180 }],
+    slant:   (sx, sy) => [{ x: sx + (sx < 270 ? 70 : -70), y: sy - 110 }],
+    out:     (sx, sy) => [{ x: sx, y: sy - 65 }, { x: sx + (sx < 270 ? -80 : 80), y: sy - 65 }],
+    post:    (sx, sy) => [{ x: sx, y: sy - 75 }, { x: sx + (sx < 270 ? 60 : -60), y: sy - 175 }],
+    curl:    (sx, sy) => [{ x: sx, y: sy - 90 }, { x: sx + (sx < 270 ? -15 : 15), y: sy - 78 }],
+    flat:    (sx, sy) => [{ x: sx + (sx < 270 ? -55 : 55), y: sy - 20 }],
+    drag:    (sx, sy) => [{ x: sx + (sx < 270 ? 140 : -140), y: sy - 30 }],
+    corner:  (sx, sy) => [{ x: sx, y: sy - 65 }, { x: sx + (sx < 270 ? -70 : 70), y: sy - 155 }],
+    seam:    (sx, sy) => [{ x: sx + (sx < 270 ? 20 : -20), y: sy - 170 }],
 };
 
-// ============================================================
-// PLAY LOGIC: determine best receiver
-// ============================================================
+// Route concepts - named combos
+const routeConcepts = [
+    { name: 'Mesh', routes: ['drag', 'drag', 'streak', 'curl'], desc: '交叉穿越克制人盯人' },
+    { name: 'Flood', routes: ['flat', 'out', 'corner', 'streak'], desc: '同侧多层淹没区域防守' },
+    { name: 'Four Verts', routes: ['streak', 'seam', 'seam', 'streak'], desc: '四路纵深攻击' },
+    { name: 'Smash', routes: ['curl', 'corner', 'slant', 'streak'], desc: '高低配合' },
+    { name: 'Drive', routes: ['drag', 'slant', 'out', 'post'], desc: '短传推进' },
+];
 
-let currentPlay = null; // { offense, defense, bestWR, wrScores, wrOpenness }
+// ============================================================
+// PLAY GENERATION & EVALUATION
+// ============================================================
+let currentPlay = null;
+let hoveredWR = -1;
 
 function generatePlay() {
     const offIdx = Math.floor(Math.random() * offenseFormations.length);
-    const defIdx = Math.floor(Math.random() * defenseFormations.length);
+    let defIdx = Math.floor(Math.random() * defenseFormations.length);
+
+    // Limit formations by level
+    if (currentLevel < 3) defIdx = defIdx % 5; // no Cover 6 early
+    if (currentLevel < 5) defIdx = defIdx % 5;
+
     const offense = JSON.parse(JSON.stringify(offenseFormations[offIdx]));
     const defense = JSON.parse(JSON.stringify(defenseFormations[defIdx]));
 
-    // For man coverage, remap coverIdx based on actual WR positions
+    // Apply route concept randomly
+    if (Math.random() < 0.4) {
+        const concept = routeConcepts[Math.floor(Math.random() * routeConcepts.length)];
+        for (let i = 0; i < 4; i++) {
+            offense.wrs[i].route = concept.routes[i];
+        }
+    }
+
+    // Man coverage: remap coverIdx based on WR positions
     if (defense.dbs.some(db => db.role === 'man')) {
         const manDBs = defense.dbs.filter(db => db.role === 'man');
-        // Sort WRs by x position, assign man coverage left to right
         const wrOrder = offense.wrs.map((w, i) => ({ ...w, idx: i })).sort((a, b) => a.x - b.x);
         manDBs.forEach((db, i) => {
             if (i < wrOrder.length) {
                 db.coverIdx = wrOrder[i].idx;
-                // Position man defender near their assignment
                 db.x = offense.wrs[wrOrder[i].idx].x;
-                db.y = offense.wrs[wrOrder[i].idx].y - 30;
+                db.y = offense.wrs[wrOrder[i].idx].y - 35;
             }
         });
     }
 
-    // Calculate openness for each WR
+    // Disguise system (level 5+)
+    defenseDisguised = false;
+    defenseRealFormation = defense;
+    defenseShownFormation = defense;
+
+    if (currentLevel >= 5 && Math.random() < 0.3 + (currentLevel - 5) * 0.1) {
+        defenseDisguised = true;
+        // Show a different formation pre-snap
+        let fakeIdx = (defIdx + 1 + Math.floor(Math.random() * 3)) % defenseFormations.length;
+        if (currentLevel < 6) fakeIdx = fakeIdx % 5;
+        defenseShownFormation = JSON.parse(JSON.stringify(defenseFormations[fakeIdx]));
+        // Remap man coverage for shown formation
+        if (defenseShownFormation.dbs.some(db => db.role === 'man')) {
+            const manDBs = defenseShownFormation.dbs.filter(db => db.role === 'man');
+            const wrOrder = offense.wrs.map((w, i) => ({ ...w, idx: i })).sort((a, b) => a.x - b.x);
+            manDBs.forEach((db, i) => {
+                if (i < wrOrder.length) {
+                    db.coverIdx = wrOrder[i].idx;
+                    db.x = offense.wrs[wrOrder[i].idx].x;
+                    db.y = offense.wrs[wrOrder[i].idx].y - 35;
+                }
+            });
+        }
+    }
+
+    // Calculate scores
     const wrScores = evaluateReceivers(offense, defense);
     const bestWR = wrScores.indexOf(Math.max(...wrScores));
 
     currentPlay = { offense, defense, bestWR, wrScores, offIdx, defIdx };
+
+    // Setup read timer
+    readTimerMax = getReadTimerMax();
+    readTimer = readTimerMax;
+    readTimerWarning = false;
+
+    hoveredWR = -1;
     return currentPlay;
 }
 
@@ -277,57 +557,49 @@ function evaluateReceivers(offense, defense) {
         const wrStat = wrStats[i];
         const routeEnd = getRouteEndpoint(wr);
 
-        // Base score from WR stats
         let openness = wrStat.speed * 0.3 + wrStat.routeRunning * 0.4 + wrStat.catching * 0.3;
-
-        // Apply off-debuffs (reduce defense effectiveness)
         let debuffReduction = offDebuffs.reduce((s, d) => s + d.value, 0);
 
-        // Check coverage
+        // Relic bonuses
+        if (hasRelic('magnetGloves')) openness += 10;
+        if (hasRelic('ghostStep') && Math.random() < 0.15) openness += 30;
+
         let closestDefDist = Infinity;
         for (const db of defense.dbs) {
-            let defTarget;
             if (db.role === 'man' && db.coverIdx === i) {
-                // Man coverage directly on this WR - very tight
-                defTarget = routeEnd;
-                const dist = 15; // tight man coverage
-                closestDefDist = Math.min(closestDefDist, dist);
+                closestDefDist = Math.min(closestDefDist, 15);
             } else if (db.role === 'man') {
-                continue; // covering someone else
+                continue;
             } else {
-                // Zone coverage - check if route endpoint falls in zone
-                defTarget = getZonePosition(db, routeEnd);
+                const defTarget = getZonePosition(db, routeEnd);
                 const dx = routeEnd.x - defTarget.x;
                 const dy = routeEnd.y - defTarget.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                closestDefDist = Math.min(closestDefDist, dist);
+                closestDefDist = Math.min(closestDefDist, Math.sqrt(dx * dx + dy * dy));
             }
         }
 
-        // Distance-based openness boost
-        if (closestDefDist < 30) {
-            openness -= (40 - closestDefDist) * 1.5;
-        } else if (closestDefDist > 60) {
-            openness += (closestDefDist - 60) * 0.5;
-        }
+        if (closestDefDist < 30) openness -= (40 - closestDefDist) * 1.5;
+        else if (closestDefDist > 60) openness += (closestDefDist - 60) * 0.5;
 
-        // Apply defense bonus (level scaling)
         openness -= (defBonus - debuffReduction) * 0.5;
 
-        // Route-specific bonuses vs defense types
-        const hasDeepZone = defense.dbs.some(db => db.role === 'deep');
-        const hasFlatZone = defense.dbs.some(db => db.role === 'flat');
-        if (wr.route === 'streak' && !hasDeepZone) openness += 25;
-        if (wr.route === 'slant' && !hasFlatZone) openness += 15;
-        if (wr.route === 'flat' && !hasFlatZone) openness += 20;
-        if (wr.route === 'drag' && !hasFlatZone) openness += 18;
-        if (wr.route === 'out' && hasDeepZone && !hasFlatZone) openness += 15;
-        if (wr.route === 'post' && !hasDeepZone) openness += 22;
-        if (wr.route === 'curl' && hasDeepZone) openness += 10;
+        // Route vs coverage bonuses
+        const hasDeep = defense.dbs.some(db => db.role === 'deep');
+        const hasFlat = defense.dbs.some(db => db.role === 'flat');
+        const isMan = defense.dbs.some(db => db.role === 'man');
 
-        // Add some randomness
-        openness += (Math.random() - 0.5) * 10;
+        if (wr.route === 'streak' && !hasDeep) openness += 25;
+        if (wr.route === 'slant' && !hasFlat) openness += 15;
+        if (wr.route === 'flat' && !hasFlat) openness += 20;
+        if (wr.route === 'drag' && isMan) openness += 18; // drags beat man
+        if (wr.route === 'drag' && !hasFlat) openness += 12;
+        if (wr.route === 'out' && hasDeep && !hasFlat) openness += 15;
+        if (wr.route === 'post' && !hasDeep) openness += 22;
+        if (wr.route === 'curl' && hasDeep) openness += 10;
+        if (wr.route === 'corner' && !hasDeep) openness += 20;
+        if (wr.route === 'seam' && !hasDeep) openness += 18;
 
+        openness += (Math.random() - 0.5) * 8;
         scores.push(Math.max(0, openness));
     }
     return scores;
@@ -339,159 +611,176 @@ function getRouteEndpoint(wr) {
 }
 
 function getZonePosition(db, targetPos) {
-    // Zone defender adjusts toward route endpoint
-    if (db.role === 'deep') {
-        return { x: db.x + (targetPos.x - db.x) * 0.4, y: Math.min(db.y, targetPos.y) };
-    } else if (db.role === 'flat') {
-        return { x: db.x + (targetPos.x - db.x) * 0.6, y: db.y + (targetPos.y - db.y) * 0.3 };
-    } else if (db.role === 'free') {
-        return { x: db.x + (targetPos.x - db.x) * 0.3, y: db.y + (targetPos.y - db.y) * 0.2 };
-    }
+    if (db.role === 'deep') return { x: db.x + (targetPos.x - db.x) * 0.4, y: Math.min(db.y, targetPos.y) };
+    if (db.role === 'flat') return { x: db.x + (targetPos.x - db.x) * 0.6, y: db.y + (targetPos.y - db.y) * 0.3 };
+    if (db.role === 'free') return { x: db.x + (targetPos.x - db.x) * 0.3, y: db.y + (targetPos.y - db.y) * 0.2 };
     return { x: db.x, y: db.y };
 }
 
-// Calculate catch success probability
 function calculateCatchProb(wrIndex) {
     const wr = wrStats[wrIndex];
     const play = currentPlay;
-    const score = play.wrScores[wrIndex];
-    const maxScore = Math.max(...play.wrScores);
+    const sc = play.wrScores[wrIndex];
+    const maxSc = Math.max(...play.wrScores);
 
-    let prob = 40; // base probability
+    let prob = 40;
+    if (wrIndex === play.bestWR) prob += 35;
+    else prob += Math.max(0, 20 * (sc / maxSc));
 
-    // If this is the best read, significant bonus
-    if (wrIndex === play.bestWR) {
-        prob += 35;
-    } else {
-        // Partial credit based on how close to best
-        prob += Math.max(0, 20 * (score / maxScore));
-    }
-
-    // QB accuracy matters
     prob += (qbStats.accuracy - 60) * 0.3;
-
-    // WR catching stat
     prob += (wr.catching - 50) * 0.2;
 
-    // Deep throws affected by arm strength
     const routeEnd = getRouteEndpoint(currentPlay.offense.wrs[wrIndex]);
     const throwDist = Math.abs(routeEnd.y - LOS_Y);
-    if (throwDist > 100) {
-        prob += (qbStats.armStrength - 60) * 0.3;
-    }
+    if (throwDist > 100) prob += (qbStats.armStrength - 60) * 0.3;
 
-    // Clamp
+    // Read timer penalty: if timer ran out, reduce probability
+    if (readTimer <= 0) prob -= 20;
+    else if (readTimer < readTimerMax * 0.25) prob -= 10;
+
+    // Relic effects
+    if (hasRelic('magnetGloves')) prob += 12;
+    if (hasRelic('gamblerHeart')) prob = 50; // always 50/50
+
     return Math.max(5, Math.min(95, prob));
 }
 
 // ============================================================
-// SIMULATION ANIMATION
+// SIMULATION
 // ============================================================
-
 let simState = null;
 
 function startSimulation(chosenWR) {
+    initAudio();
     const play = currentPlay;
     const wr = play.offense.wrs[chosenWR];
     const routeEndpoint = getRouteEndpoint(wr);
     const catchProb = calculateCatchProb(chosenWR);
     const success = Math.random() * 100 < catchProb;
 
-    // Calculate yards gained on success
     let yardsGained = 0;
     if (success) {
         yardsGained = Math.round(Math.abs(routeEndpoint.y - LOS_Y) / YARD_PX) + Math.floor(Math.random() * 5);
+        if (hasRelic('yacMaster')) yardsGained += 3 + Math.floor(Math.random() * 5);
+        if (hasRelic('gamblerHeart')) yardsGained *= 2;
     }
 
+    // Use real defense positions for simulation (if disguised)
+    const realDef = defenseRealFormation;
+
     simState = {
-        phase: 'snap',       // snap, routes, throw, catch, result
+        phase: 'snap',
         timer: 0,
         chosenWR,
         success,
         catchProb,
         yardsGained,
-        // Animated positions
         wrPositions: play.offense.wrs.map(w => ({ x: w.x, y: w.y })),
-        dbPositions: play.defense.dbs.map(db => ({ x: db.x, y: db.y })),
-        rusherPos: { x: play.defense.rusher.x, y: play.defense.rusher.y },
+        dbPositions: realDef.dbs.map(db => ({ x: db.x, y: db.y })),
+        rusherPos: { x: realDef.rusher.x, y: realDef.rusher.y },
         qbPos: { x: play.offense.qb.x, y: play.offense.qb.y },
         ballPos: null,
         ballTarget: null,
         routeProgress: 0,
         throwProgress: 0,
-        resultTimer: 0,
+        slowMo: false,
+        slowMoTimer: 0,
     };
+
+    playSound('snap');
+    triggerShake(2, 0.1);
+    camera.targetY = -15;
+    camera.targetZoom = 1.02;
     gameState = 'simulation';
 }
 
 function updateSimulation(dt) {
     if (!simState) return;
-    simState.timer += dt;
+
+    // Slow-mo effect during throw
+    let effectiveDt = dt;
+    if (simState.slowMo) {
+        simState.slowMoTimer += dt;
+        if (simState.slowMoTimer < 0.4) effectiveDt = dt * 0.3;
+        else { simState.slowMo = false; effectiveDt = dt * 1.5; }
+    }
+
+    simState.timer += effectiveDt;
 
     switch (simState.phase) {
         case 'snap':
-            if (simState.timer > 0.3) {
+            if (simState.timer > 0.25) {
                 simState.phase = 'routes';
                 simState.timer = 0;
             }
             break;
 
         case 'routes':
-            simState.routeProgress = Math.min(1, simState.timer / 1.2);
+            simState.routeProgress = Math.min(1, simState.timer / 1.0);
 
-            // Move WRs along routes
             for (let i = 0; i < 4; i++) {
                 const wr = currentPlay.offense.wrs[i];
                 const path = routePaths[wr.route](wr.x, wr.y);
-                const totalPoints = path.length;
-                const segProgress = simState.routeProgress * totalPoints;
-                const segIdx = Math.min(Math.floor(segProgress), totalPoints - 1);
-                const segT = segProgress - segIdx;
+                const totalPts = path.length;
+                const segProg = simState.routeProgress * totalPts;
+                const segIdx = Math.min(Math.floor(segProg), totalPts - 1);
+                const segT = segProg - segIdx;
 
                 const fromX = segIdx === 0 ? wr.x : path[segIdx - 1].x;
                 const fromY = segIdx === 0 ? wr.y : path[segIdx - 1].y;
-                const toX = path[segIdx].x;
-                const toY = path[segIdx].y;
+                simState.wrPositions[i].x = fromX + (path[segIdx].x - fromX) * segT;
+                simState.wrPositions[i].y = fromY + (path[segIdx].y - fromY) * segT;
 
-                simState.wrPositions[i].x = fromX + (toX - fromX) * segT;
-                simState.wrPositions[i].y = fromY + (toY - fromY) * segT;
-            }
-
-            // Move defenders
-            for (let i = 0; i < 4; i++) {
-                const db = currentPlay.defense.dbs[i];
-                if (db.role === 'man' && db.coverIdx >= 0) {
-                    const target = simState.wrPositions[db.coverIdx];
-                    simState.dbPositions[i].x += (target.x - simState.dbPositions[i].x) * 0.04;
-                    simState.dbPositions[i].y += (target.y - simState.dbPositions[i].y) * 0.04;
-                } else {
-                    // Zone defenders shift toward chosen WR
-                    const target = simState.wrPositions[simState.chosenWR];
-                    simState.dbPositions[i].x += (target.x - simState.dbPositions[i].x) * 0.015;
-                    simState.dbPositions[i].y += (target.y - simState.dbPositions[i].y) * 0.01;
+                // Footstep particles
+                if (Math.random() < 0.1) {
+                    spawnParticles(simState.wrPositions[i].x, simState.wrPositions[i].y + 12, 1, PAL.field2, 0.5, 0.3, 2);
                 }
             }
 
-            // Move rusher toward QB
-            const rushSpeed = currentPlay.defense.rusher.fast ? 0.05 : 0.03;
-            simState.rusherPos.x += (simState.qbPos.x - simState.rusherPos.x) * rushSpeed;
-            simState.rusherPos.y += (simState.qbPos.y - simState.rusherPos.y) * rushSpeed;
+            // Move defenders
+            const realDef = defenseRealFormation;
+            for (let i = 0; i < 4; i++) {
+                const db = realDef.dbs[i];
+                if (db.role === 'man' && db.coverIdx >= 0) {
+                    const t = simState.wrPositions[db.coverIdx];
+                    simState.dbPositions[i].x += (t.x - simState.dbPositions[i].x) * 0.045;
+                    simState.dbPositions[i].y += (t.y - simState.dbPositions[i].y) * 0.045;
+                } else {
+                    const t = simState.wrPositions[simState.chosenWR];
+                    simState.dbPositions[i].x += (t.x - simState.dbPositions[i].x) * 0.018;
+                    simState.dbPositions[i].y += (t.y - simState.dbPositions[i].y) * 0.012;
+                }
+            }
 
-            // QB steps back slightly
-            simState.qbPos.y += 0.3;
+            // Rusher
+            const rushSpd = realDef.rusher.fast ? 0.06 : 0.035;
+            const irw = hasRelic('ironCenter') ? rushSpd * 0.5 : rushSpd;
+            simState.rusherPos.x += (simState.qbPos.x - simState.rusherPos.x) * irw;
+            simState.rusherPos.y += (simState.qbPos.y - simState.rusherPos.y) * irw;
+            simState.qbPos.y += 0.2;
 
-            if (simState.routeProgress >= 0.7) {
+            if (simState.routeProgress >= 0.65) {
                 simState.phase = 'throw';
                 simState.timer = 0;
                 simState.ballPos = { x: simState.qbPos.x, y: simState.qbPos.y };
                 simState.ballTarget = { ...simState.wrPositions[simState.chosenWR] };
+                simState.slowMo = true;
+                simState.slowMoTimer = 0;
+                playSound('throw');
+                triggerShake(3, 0.12);
+                spawnParticles(simState.qbPos.x, simState.qbPos.y - 5, 5, '#fff', 3, 0.3, 2);
             }
             break;
 
         case 'throw':
-            simState.throwProgress = Math.min(1, simState.timer / 0.6);
+            simState.throwProgress = Math.min(1, simState.timer / 0.5);
             simState.ballPos.x = simState.qbPos.x + (simState.ballTarget.x - simState.qbPos.x) * simState.throwProgress;
             simState.ballPos.y = simState.qbPos.y + (simState.ballTarget.y - simState.qbPos.y) * simState.throwProgress;
+
+            // Ball trail
+            if (simState.throwProgress < 0.95) {
+                spawnTrail(simState.ballPos.x, simState.ballPos.y, 'rgba(139,69,19,0.4)');
+            }
 
             // Continue moving players
             for (let i = 0; i < 4; i++) {
@@ -500,31 +789,40 @@ function updateSimulation(dt) {
                 const endPt = path[path.length - 1];
                 simState.wrPositions[i].x += (endPt.x - simState.wrPositions[i].x) * 0.05;
                 simState.wrPositions[i].y += (endPt.y - simState.wrPositions[i].y) * 0.05;
-
-                const db = currentPlay.defense.dbs[i];
+            }
+            for (let i = 0; i < 4; i++) {
+                const db = defenseRealFormation.dbs[i];
                 if (db.role === 'man' && db.coverIdx >= 0) {
-                    const target = simState.wrPositions[db.coverIdx];
-                    simState.dbPositions[i].x += (target.x - simState.dbPositions[i].x) * 0.06;
-                    simState.dbPositions[i].y += (target.y - simState.dbPositions[i].y) * 0.06;
+                    const t = simState.wrPositions[db.coverIdx];
+                    simState.dbPositions[i].x += (t.x - simState.dbPositions[i].x) * 0.06;
+                    simState.dbPositions[i].y += (t.y - simState.dbPositions[i].y) * 0.06;
                 }
             }
 
             if (simState.throwProgress >= 1) {
                 simState.phase = 'catch';
                 simState.timer = 0;
+                if (simState.success) {
+                    playSound('catch');
+                    triggerShake(5, 0.2);
+                    spawnParticles(simState.ballTarget.x, simState.ballTarget.y, 12, PAL.gold, 3, 0.5, 3);
+                } else {
+                    playSound('fail');
+                    triggerShake(4, 0.25);
+                    spawnParticles(simState.ballTarget.x, simState.ballTarget.y, 8, '#888', 2, 0.4, 2);
+                }
             }
             break;
 
         case 'catch':
-            if (simState.timer > 0.5) {
+            if (simState.timer > 1.5) {
                 simState.phase = 'result';
                 simState.timer = 0;
             }
             break;
 
         case 'result':
-            simState.resultTimer = Math.min(1, simState.timer / 0.5);
-            if (simState.timer > 2.0) {
+            if (simState.timer > 1.0) {
                 handlePlayResult();
             }
             break;
@@ -536,8 +834,10 @@ function handlePlayResult() {
         score += simState.yardsGained * 10;
         downs.ballPosition += simState.yardsGained;
         if (downs.ballPosition >= 40) {
-            // Touchdown!
             score += 600;
+            playSound('td');
+            spawnConfetti(W / 2, H / 2);
+            triggerShake(6, 0.5);
             if (currentLevel >= maxLevel) {
                 gameState = 'victory';
             } else {
@@ -545,45 +845,46 @@ function handlePlayResult() {
                 currentLevel++;
                 downs = { current: 1, yardsToGo: 20, ballPosition: 0 };
                 applyDefenseBuff();
+                generateUpgradeOptions();
             }
         } else if (simState.yardsGained >= downs.yardsToGo) {
-            // First down
             downs.current = 1;
             downs.yardsToGo = Math.max(10, 40 - downs.ballPosition);
         } else {
             downs.current++;
             downs.yardsToGo -= simState.yardsGained;
-            if (downs.current > 4) {
-                // Turnover on downs
-                gameState = 'gameOver';
-                return;
-            }
+            if (downs.current > 4) { gameState = 'gameOver'; simState = null; return; }
         }
     } else {
         downs.current++;
-        if (downs.current > 4) {
-            gameState = 'gameOver';
-            return;
-        }
+        if (downs.current > 4) { gameState = 'gameOver'; simState = null; return; }
     }
 
     if (gameState === 'simulation') {
-        gameState = 'result';
+        // Auto-advance to next play
+        simState = null;
+        camera.targetY = 0;
+        camera.targetZoom = 1;
+        gameState = 'transition';
+        transitionTimer = 0;
     }
     simState = null;
 }
 
-// ============================================================
-// UPGRADE SYSTEM
-// ============================================================
+// Transition
+let transitionTimer = 0;
 
+// ============================================================
+// UPGRADE & RELIC SYSTEM
+// ============================================================
 let upgradeOptions = [];
 
 const qbUpgrades = [
     { name: '精准臂力', desc: '传球精准度 +8', apply: () => { qbStats.accuracy += 8; } },
     { name: '火箭臂', desc: '臂力 +10', apply: () => { qbStats.armStrength += 10; } },
-    { name: '快速阅读', desc: '阅读防守能力 +5', apply: () => { qbStats.readSpeed += 5; } },
-    { name: '口袋感知', desc: '精准度+5, 臂力+5', apply: () => { qbStats.accuracy += 5; qbStats.armStrength += 5; } },
+    { name: '快速阅读', desc: '阅读防守 +5, 额外决策时间', apply: () => { qbStats.readSpeed += 5; } },
+    { name: '口袋大师', desc: '精准+5, 臂力+5', apply: () => { qbStats.accuracy += 5; qbStats.armStrength += 5; } },
+    { name: '鹰眼视野', desc: '阅读+3, 精准+4', apply: () => { qbStats.readSpeed += 3; qbStats.accuracy += 4; } },
 ];
 
 const wrUpgradePool = [
@@ -594,199 +895,387 @@ const wrUpgradePool = [
 ];
 
 const debuffPool = [
-    { name: '迷雾干扰', desc: '防守反应速度降低', value: 8 },
-    { name: '场地湿滑', desc: '防守移动能力降低', value: 10 },
-    { name: '假动作', desc: '防守判断力降低', value: 6 },
-    { name: '节奏变化', desc: '防守协调性降低', value: 12 },
+    { name: '迷雾干扰', desc: '防守反应降低', value: 8 },
+    { name: '场地湿滑', desc: '防守移动降低', value: 10 },
+    { name: '假动作', desc: '防守判断降低', value: 6 },
+    { name: '节奏变化', desc: '防守协调降低', value: 12 },
 ];
 
 const defBuffPool = [
-    { name: '铁壁防守', desc: '防守覆盖能力增强', value: 8 },
-    { name: '鹰眼', desc: '防守阅读进攻能力增强', value: 6 },
-    { name: '闪电反应', desc: '防守反应速度增强', value: 10 },
-    { name: '钢铁意志', desc: '防守整体实力提升', value: 7 },
+    { name: '铁壁防守', desc: '覆盖增强', value: 8 },
+    { name: '鹰眼', desc: '阅读进攻增强', value: 6 },
+    { name: '闪电反应', desc: '反应增强', value: 10 },
+    { name: '钢铁意志', desc: '整体提升', value: 7 },
+];
+
+const relicPool = [
+    { id: 'magnetGloves', name: '磁力手套', desc: '接球率+12%, 但WR速度-5', effect: () => { wrStats.forEach(w => w.speed -= 5); } },
+    { id: 'filmStudy', name: '赛前录像', desc: '决策时间+0.5秒, 偶尔显示防守名称', effect: () => {} },
+    { id: 'ghostStep', name: '幽灵步', desc: 'WR有15%概率瞬间摆脱', effect: () => {} },
+    { id: 'ironCenter', name: '铁壁中锋', desc: '冲传速度减半', effect: () => {} },
+    { id: 'yacMaster', name: '接球后冲刺', desc: '接球后额外+3~8码', effect: () => {} },
+    { id: 'gamblerHeart', name: '赌徒之心', desc: '所有传球50/50, 成功码数翻倍', effect: () => {} },
+    { id: 'echoRadar', name: '回声雷达', desc: '显示DB移动预测线', effect: () => {} },
 ];
 
 function generateUpgradeOptions() {
     upgradeOptions = [];
 
-    // Always offer 3 choices: QB upgrade, WR upgrade, defense debuff
+    // QB upgrade
     const qbOpt = qbUpgrades[Math.floor(Math.random() * qbUpgrades.length)];
-    upgradeOptions.push({ type: 'qb', ...qbOpt });
+    upgradeOptions.push({ type: 'qb', icon: 'qb', ...qbOpt });
 
+    // WR upgrade
     const wrOpt = wrUpgradePool[Math.floor(Math.random() * wrUpgradePool.length)];
     const wrTarget = Math.floor(Math.random() * 4);
     upgradeOptions.push({
-        type: 'wr',
-        target: wrTarget,
+        type: 'wr', icon: 'wr', target: wrTarget,
         name: `${wrStats[wrTarget].name} ${wrOpt.name}`,
         desc: `${wrStats[wrTarget].name}: ${wrOpt.desc}`,
-        stat: wrOpt.stat,
-        value: wrOpt.value,
+        stat: wrOpt.stat, value: wrOpt.value,
     });
 
+    // Defense debuff
     const debOpt = debuffPool[Math.floor(Math.random() * debuffPool.length)];
-    upgradeOptions.push({ type: 'debuff', ...debOpt });
+    upgradeOptions.push({ type: 'debuff', icon: 'shield', ...debOpt });
+
+    // Relic chance (20% per TD)
+    if (Math.random() < 0.2 && relicPool.length > 0) {
+        const availRelics = relicPool.filter(r => !hasRelic(r.id));
+        if (availRelics.length > 0) {
+            const relic = availRelics[Math.floor(Math.random() * availRelics.length)];
+            upgradeOptions.push({ type: 'relic', icon: 'star', ...relic });
+        }
+    }
 }
 
 function applyUpgrade(index) {
+    initAudio();
+    playSound('select');
     const opt = upgradeOptions[index];
     if (opt.type === 'qb') {
         opt.apply();
         qbStats.level++;
     } else if (opt.type === 'wr') {
         const wr = wrStats[opt.target];
-        if (opt.stat === 'all') {
-            wr.speed += opt.value;
-            wr.catching += opt.value;
-            wr.routeRunning += opt.value;
-        } else {
-            wr[opt.stat] += opt.value;
-        }
+        if (opt.stat === 'all') { wr.speed += opt.value; wr.catching += opt.value; wr.routeRunning += opt.value; }
+        else wr[opt.stat] += opt.value;
         wr.level++;
     } else if (opt.type === 'debuff') {
         offDebuffs.push({ name: opt.name, value: opt.value });
+    } else if (opt.type === 'relic') {
+        relics.push({ id: opt.id, name: opt.name, desc: opt.desc });
+        if (opt.effect) opt.effect();
     }
 }
 
 function applyDefenseBuff() {
-    if (currentLevel > 2 && Math.random() < 0.7) {
+    if (currentLevel > 2 && Math.random() < 0.65) {
         const buff = defBuffPool[Math.floor(Math.random() * defBuffPool.length)];
         defBuffs.push({ ...buff });
     }
 }
 
 // ============================================================
-// PIXEL ART DRAWING
+// PIXEL ART RENDERING
 // ============================================================
 
-function drawPixelPlayer(x, y, color, facingUp, isHighlighted, label, isQB) {
+function drawPixelSprite(x, y, type, facingUp, highlighted, label, animFrame) {
     const px = Math.round(x);
     const py = Math.round(y);
+    const f = animFrame || 0;
 
-    // Body
-    ctx.fillStyle = color;
-    ctx.fillRect(px - 5, py - 4, 10, 10);
+    ctx.save();
 
-    // Head
-    ctx.fillStyle = '#fdd';
-    ctx.fillRect(px - 3, py - 8, 6, 5);
-
-    // Helmet
-    ctx.fillStyle = color;
-    ctx.fillRect(px - 4, py - 9, 8, 3);
-
-    // Legs
-    ctx.fillStyle = '#333';
-    if (facingUp) {
-        ctx.fillRect(px - 4, py + 6, 3, 4);
-        ctx.fillRect(px + 1, py + 6, 3, 4);
-    } else {
-        ctx.fillRect(px - 4, py + 6, 3, 4);
-        ctx.fillRect(px + 1, py + 6, 3, 4);
-    }
-
-    // Arms
-    ctx.fillStyle = color;
-    ctx.fillRect(px - 7, py - 2, 3, 6);
-    ctx.fillRect(px + 5, py - 2, 3, 6);
-
-    // Number on jersey
-    if (isQB) {
+    if (type === 'qb') {
+        // QB - larger, gold helmet, throwing pose
+        // Helmet
+        ctx.fillStyle = PAL.qbGold;
+        ctx.fillRect(px - 6, py - 16, 12, 6);
+        ctx.fillStyle = '#b8860b';
+        ctx.fillRect(px - 7, py - 13, 1, 3); // facemask
+        // Head
+        ctx.fillStyle = PAL.skin;
+        ctx.fillRect(px - 5, py - 11, 10, 5);
+        // Body
+        ctx.fillStyle = PAL.offBody;
+        ctx.fillRect(px - 7, py - 6, 14, 10);
+        // Number
         ctx.fillStyle = '#fff';
-        ctx.fillRect(px - 2, py - 1, 1, 3);
-        ctx.fillRect(px + 1, py - 1, 1, 3);
+        ctx.fillRect(px - 2, py - 4, 1, 4);
+        ctx.fillRect(px + 1, py - 4, 1, 4);
+        ctx.fillRect(px - 1, py - 4, 1, 1);
+        ctx.fillRect(px - 1, py, 1, 1);
+        // Arms - throwing motion
+        ctx.fillStyle = PAL.skin;
+        ctx.fillRect(px - 10, py - 5, 4, 3);
+        ctx.fillRect(px + 7, py - 8 + (f % 2), 4, 3);
+        // Pants
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(px - 6, py + 4, 12, 4);
+        // Legs
+        ctx.fillStyle = PAL.offBody;
+        const legOff = f % 2 === 0 ? 0 : 1;
+        ctx.fillRect(px - 5, py + 8, 4, 5 + legOff);
+        ctx.fillRect(px + 1, py + 8, 4, 5 - legOff);
+        // Shoes
+        ctx.fillStyle = '#333';
+        ctx.fillRect(px - 5, py + 13 + legOff, 4, 2);
+        ctx.fillRect(px + 1, py + 13 - legOff, 4, 2);
+        // Flag (waist flags)
+        ctx.fillStyle = PAL.accent;
+        ctx.fillRect(px - 9, py + 2, 3, 5);
+        ctx.fillRect(px + 7, py + 2, 3, 5);
+    } else if (type === 'wr') {
+        // WR - blue team, athletic build
+        // Helmet
+        ctx.fillStyle = PAL.offLight;
+        ctx.fillRect(px - 5, py - 15, 10, 5);
+        ctx.fillStyle = '#ddd';
+        ctx.fillRect(px - 6, py - 12, 1, 3);
+        // Head
+        ctx.fillStyle = PAL.skin;
+        ctx.fillRect(px - 4, py - 10, 8, 4);
+        // Body
+        ctx.fillStyle = PAL.offBody;
+        ctx.fillRect(px - 6, py - 6, 12, 9);
+        // Number area
+        ctx.fillStyle = PAL.offWhite;
+        ctx.fillRect(px - 3, py - 4, 6, 5);
+        // Arms
+        ctx.fillStyle = PAL.skin;
+        const armUp = f % 3 === 0 ? -1 : 0;
+        ctx.fillRect(px - 9, py - 4 + armUp, 4, 3);
+        ctx.fillRect(px + 6, py - 4 - armUp, 4, 3);
+        // Pants
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(px - 5, py + 3, 10, 3);
+        // Legs with run animation
+        ctx.fillStyle = PAL.offBody;
+        const legA = Math.sin(f * 0.8) * 2;
+        ctx.fillRect(px - 4, py + 6, 3, 5 + Math.round(legA));
+        ctx.fillRect(px + 1, py + 6, 3, 5 - Math.round(legA));
+        // Shoes
+        ctx.fillStyle = '#333';
+        ctx.fillRect(px - 4, py + 11 + Math.round(legA), 3, 2);
+        ctx.fillRect(px + 1, py + 11 - Math.round(legA), 3, 2);
+        // Flags
+        ctx.fillStyle = PAL.accent;
+        ctx.fillRect(px - 8, py + 1, 3, 4);
+        ctx.fillRect(px + 6, py + 1, 3, 4);
+    } else if (type === 'db') {
+        // DB - red team, lower stance
+        // Helmet
+        ctx.fillStyle = PAL.defLight;
+        ctx.fillRect(px - 5, py - 13, 10, 5);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(px - 6, py - 10, 1, 3);
+        // Head
+        ctx.fillStyle = PAL.skin;
+        ctx.fillRect(px - 4, py - 9, 8, 4);
+        // Body - wider stance
+        ctx.fillStyle = PAL.defBody;
+        ctx.fillRect(px - 7, py - 5, 14, 9);
+        // Number
+        ctx.fillStyle = '#ddd';
+        ctx.fillRect(px - 2, py - 3, 4, 4);
+        // Arms - out wide (backpedal)
+        ctx.fillStyle = PAL.skin;
+        ctx.fillRect(px - 11, py - 3, 5, 3);
+        ctx.fillRect(px + 7, py - 3, 5, 3);
+        // Pants
+        ctx.fillStyle = '#222';
+        ctx.fillRect(px - 6, py + 4, 12, 3);
+        // Legs
+        ctx.fillStyle = PAL.defBody;
+        ctx.fillRect(px - 5, py + 7, 3, 4);
+        ctx.fillRect(px + 2, py + 7, 3, 4);
+        // Shoes
+        ctx.fillStyle = '#111';
+        ctx.fillRect(px - 5, py + 11, 4, 2);
+        ctx.fillRect(px + 2, py + 11, 4, 2);
+    } else if (type === 'rusher') {
+        // Rusher - bigger, more aggressive
+        // Helmet
+        ctx.fillStyle = PAL.defLight;
+        ctx.fillRect(px - 6, py - 14, 12, 5);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(px - 7, py - 11, 2, 3);
+        // Head
+        ctx.fillStyle = PAL.skin;
+        ctx.fillRect(px - 5, py - 10, 10, 4);
+        // Body - wider
+        ctx.fillStyle = PAL.defBody;
+        ctx.fillRect(px - 8, py - 6, 16, 10);
+        // Arms - forward (rushing)
+        ctx.fillStyle = PAL.skin;
+        ctx.fillRect(px - 11, py - 5 - (f % 2), 4, 4);
+        ctx.fillRect(px + 8, py - 5 + (f % 2), 4, 4);
+        // Pants
+        ctx.fillStyle = '#222';
+        ctx.fillRect(px - 7, py + 4, 14, 3);
+        // Legs
+        ctx.fillStyle = PAL.defBody;
+        ctx.fillRect(px - 6, py + 7, 4, 5);
+        ctx.fillRect(px + 2, py + 7, 4, 5);
+        ctx.fillStyle = '#111';
+        ctx.fillRect(px - 6, py + 12, 5, 2);
+        ctx.fillRect(px + 2, py + 12, 5, 2);
     }
 
     // Highlight ring
-    if (isHighlighted) {
-        ctx.strokeStyle = C.highlight;
+    if (highlighted) {
+        ctx.strokeStyle = PAL.highlight;
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(px, py, 14, 0, Math.PI * 2);
+        ctx.arc(px, py, 18, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Pulsing glow
+        const pulse = 0.5 + Math.sin(Date.now() / 200) * 0.3;
+        ctx.strokeStyle = `rgba(255, 215, 0, ${pulse})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(px, py, 22, 0, Math.PI * 2);
         ctx.stroke();
     }
+
+    ctx.restore();
 
     // Label
     if (label) {
         ctx.fillStyle = '#fff';
-        ctx.font = '8px monospace';
+        ctx.font = 'bold 9px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(label, px, py + 20);
+        ctx.fillText(label, px, py + 22);
     }
 }
 
 function drawBall(x, y) {
-    ctx.fillStyle = C.ball;
-    ctx.fillRect(Math.round(x) - 3, Math.round(y) - 2, 6, 4);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(Math.round(x) - 1, Math.round(y) - 2, 2, 4);
+    const px = Math.round(x);
+    const py = Math.round(y);
+    ctx.fillStyle = PAL.ball;
+    ctx.fillRect(px - 4, py - 2, 8, 5);
+    ctx.fillStyle = PAL.ballLace;
+    ctx.fillRect(px - 1, py - 2, 2, 5);
+    ctx.fillRect(px - 3, py, 1, 1);
+    ctx.fillRect(px + 2, py, 1, 1);
 }
 
+// ============================================================
+// FIELD RENDERING
+// ============================================================
 function drawField() {
-    // Main field
-    ctx.fillStyle = C.field;
-    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
-
-    // Darker stripes
-    for (let y = 0; y < FIELD_H; y += YARD_PX * 10) {
-        ctx.fillStyle = C.fieldDark;
-        ctx.fillRect(0, y, FIELD_W, YARD_PX * 5);
+    // Dithered grass pattern
+    for (let y = 0; y < H; y += 2) {
+        for (let x = 0; x < W; x += 2) {
+            const stripe = Math.floor(y / (YARD_PX * 5)) % 2;
+            const dither = (x + y) % 4 < 2;
+            if (stripe === 0) {
+                ctx.fillStyle = dither ? PAL.field1 : PAL.field2;
+            } else {
+                ctx.fillStyle = dither ? PAL.fieldDark1 : PAL.fieldDark2;
+            }
+            ctx.fillRect(x, y, 2, 2);
+        }
     }
 
-    // End zone
-    ctx.fillStyle = C.endzone;
-    ctx.fillRect(0, 0, FIELD_W, ENDZONE_Y);
-    ctx.fillStyle = C.endzoneText;
-    ctx.font = 'bold 28px monospace';
+    // End zone - diagonal stripes
+    for (let y = 0; y < ENDZONE_H; y += 2) {
+        for (let x = 0; x < W; x += 2) {
+            const stripe = ((x + y) / 8) % 2 < 1;
+            ctx.fillStyle = stripe ? PAL.endzone1 : PAL.endzone2;
+            ctx.fillRect(x, y, 2, 2);
+        }
+    }
+
+    // End zone text
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.font = 'bold 36px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('TOUCHDOWN', FIELD_W / 2, ENDZONE_Y / 2 + 10);
+    ctx.fillText('TOUCHDOWN', W / 2, ENDZONE_H / 2 + 12);
+
+    // Pylons
+    ctx.fillStyle = '#ff6600';
+    ctx.fillRect(8, ENDZONE_H - 3, 4, 8);
+    ctx.fillRect(W - 12, ENDZONE_H - 3, 4, 8);
 
     // Yard lines
     for (let i = 0; i <= 20; i++) {
-        const y = ENDZONE_Y + i * YARD_PX * 2;
-        ctx.strokeStyle = i % 5 === 0 ? C.line : C.lineFaint;
-        ctx.lineWidth = i % 5 === 0 ? 1 : 0.5;
+        const y = ENDZONE_H + i * YARD_PX * 2;
+        const isMajor = i % 5 === 0;
+        ctx.strokeStyle = isMajor ? PAL.line : PAL.lineGhost;
+        ctx.lineWidth = isMajor ? 1.5 : 0.5;
         ctx.beginPath();
-        ctx.moveTo(20, y);
-        ctx.lineTo(FIELD_W - 20, y);
+        ctx.moveTo(25, y);
+        ctx.lineTo(W - 25, y);
         ctx.stroke();
+
+        // Hash marks
+        if (isMajor) {
+            ctx.fillStyle = PAL.line;
+            ctx.fillRect(25, y - 1, 1, 4);
+            ctx.fillRect(W - 26, y - 1, 1, 4);
+            ctx.fillRect(W * 0.33, y - 1, 1, 4);
+            ctx.fillRect(W * 0.67, y - 1, 1, 4);
+        }
     }
 
     // Yard numbers
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = '10px monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'center';
     for (let i = 1; i <= 4; i++) {
-        const y = ENDZONE_Y + i * YARD_PX * 5 * 2;
-        ctx.fillText(`${i * 10}`, 15, y + 4);
-        ctx.fillText(`${i * 10}`, FIELD_W - 15, y + 4);
+        const y = ENDZONE_H + i * YARD_PX * 5 * 2 + 4;
+        ctx.fillText(`${i * 10}`, 17, y);
+        ctx.fillText(`${i * 10}`, W - 17, y);
     }
 
     // Sidelines
-    ctx.strokeStyle = C.line;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(5, 0, FIELD_W - 10, FIELD_H);
+    ctx.strokeStyle = PAL.line;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(6, 0, W - 12, H - 60);
 
-    // Line of scrimmage
-    ctx.strokeStyle = '#ffff00';
+    // Pixel crowd (sidelines)
+    for (let y = 0; y < H - 60; y += 6) {
+        for (let side = 0; side < 2; side++) {
+            const baseX = side === 0 ? 0 : W - 6;
+            const crowdColors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#fff'];
+            const ci = (y * 7 + side * 3) % crowdColors.length;
+            ctx.fillStyle = crowdColors[ci];
+            ctx.fillRect(baseX, y, 5, 4);
+            // Occasional jump animation
+            if (gameState === 'simulation' && simState && simState.phase === 'catch' && simState.success) {
+                if (Math.random() < 0.3) {
+                    ctx.fillRect(baseX, y - 2, 5, 4);
+                }
+            }
+        }
+    }
+
+    // Line of Scrimmage (glowing yellow)
+    ctx.fillStyle = 'rgba(255,255,68,0.15)';
+    ctx.fillRect(6, LOS_Y - 3, W - 12, 6);
+    ctx.strokeStyle = PAL.losLine;
     ctx.lineWidth = 2;
-    ctx.setLineDash([6, 4]);
+    ctx.setLineDash([8, 4]);
     ctx.beginPath();
-    ctx.moveTo(5, LOS_Y);
-    ctx.lineTo(FIELD_W - 5, LOS_Y);
+    ctx.moveTo(6, LOS_Y);
+    ctx.lineTo(W - 6, LOS_Y);
     ctx.stroke();
     ctx.setLineDash([]);
 
     // First down line
     if (downs.yardsToGo > 0) {
         const fdY = LOS_Y - downs.yardsToGo * YARD_PX;
-        ctx.strokeStyle = '#ff6600';
+        ctx.fillStyle = 'rgba(255,119,34,0.12)';
+        ctx.fillRect(6, fdY - 2, W - 12, 4);
+        ctx.strokeStyle = PAL.firstDown;
         ctx.lineWidth = 2;
-        ctx.setLineDash([4, 4]);
+        ctx.setLineDash([5, 5]);
         ctx.beginPath();
-        ctx.moveTo(5, fdY);
-        ctx.lineTo(FIELD_W - 5, fdY);
+        ctx.moveTo(6, fdY);
+        ctx.lineTo(W - 6, fdY);
         ctx.stroke();
         ctx.setLineDash([]);
     }
@@ -797,111 +1286,205 @@ function drawRouteLines() {
     for (let i = 0; i < 4; i++) {
         const wr = currentPlay.offense.wrs[i];
         const path = routePaths[wr.route](wr.x, wr.y);
+        const isHovered = i === hoveredWR;
 
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = isHovered ? 'rgba(255,215,0,0.6)' : 'rgba(255,255,255,0.25)';
+        ctx.lineWidth = isHovered ? 2 : 1;
+        ctx.setLineDash([4, 3]);
         ctx.beginPath();
         ctx.moveTo(wr.x, wr.y);
-        for (const pt of path) {
-            ctx.lineTo(pt.x, pt.y);
-        }
+        for (const pt of path) ctx.lineTo(pt.x, pt.y);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Arrow at end
+        // Arrow dot at end
         const endPt = path[path.length - 1];
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillStyle = isHovered ? PAL.gold : 'rgba(255,255,255,0.3)';
         ctx.beginPath();
-        ctx.arc(endPt.x, endPt.y, 3, 0, Math.PI * 2);
+        ctx.arc(endPt.x, endPt.y, isHovered ? 4 : 3, 0, Math.PI * 2);
         ctx.fill();
     }
 }
 
-// ============================================================
-// HUD & UI
-// ============================================================
+// Separation visualization (openness fan)
+function drawOpennessFan(wrIndex) {
+    if (!currentPlay || wrIndex < 0) return;
+    const wr = currentPlay.offense.wrs[wrIndex];
+    const routeEnd = getRouteEndpoint(wr);
+    const sc = currentPlay.wrScores[wrIndex];
+    const maxSc = Math.max(...currentPlay.wrScores);
+    const openness = sc / maxSc;
 
-function drawHUD() {
-    // Top bar
-    ctx.fillStyle = C.hud;
-    ctx.fillRect(0, FIELD_H, FIELD_W, 60);
+    // Only show if readSpeed is enough
+    const clarity = Math.min(1, (qbStats.readSpeed + 2) / 10);
 
-    ctx.fillStyle = C.hudText;
-    ctx.font = '11px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`第 ${currentLevel}/${maxLevel} 关`, 10, FIELD_H - 45);
-    ctx.fillText(`得分: ${score}`, 10, FIELD_H - 30);
+    const radius = 25 + openness * 20;
+    const gradient = ctx.createRadialGradient(routeEnd.x, routeEnd.y, 5, routeEnd.x, routeEnd.y, radius);
 
-    ctx.textAlign = 'center';
-    ctx.fillText(`${downs.current}档 ${downs.yardsToGo}码`, FIELD_W / 2, FIELD_H - 45);
-    ctx.fillText(`推进: ${downs.ballPosition}/40码`, FIELD_W / 2, FIELD_H - 30);
+    if (openness > 0.7) {
+        gradient.addColorStop(0, `rgba(46,204,113,${0.3 * clarity})`);
+        gradient.addColorStop(1, `rgba(46,204,113,0)`);
+    } else if (openness > 0.4) {
+        gradient.addColorStop(0, `rgba(241,196,15,${0.25 * clarity})`);
+        gradient.addColorStop(1, `rgba(241,196,15,0)`);
+    } else {
+        gradient.addColorStop(0, `rgba(231,76,60,${0.25 * clarity})`);
+        gradient.addColorStop(1, `rgba(231,76,60,0)`);
+    }
 
-    ctx.textAlign = 'right';
-    ctx.fillText(`QB Lv.${qbStats.level} 精准:${qbStats.accuracy}`, FIELD_W - 10, FIELD_H - 45);
-    ctx.fillText(`臂力:${qbStats.armStrength}`, FIELD_W - 10, FIELD_H - 30);
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(routeEnd.x, routeEnd.y, radius, 0, Math.PI * 2);
+    ctx.fill();
 }
 
+// ============================================================
+// HUD
+// ============================================================
+function drawHUD() {
+    // Bottom HUD bar
+    ctx.fillStyle = PAL.hud;
+    ctx.fillRect(0, H - 56, W, 56);
+    ctx.strokeStyle = PAL.hudBorder;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, H - 56);
+    ctx.lineTo(W, H - 56);
+    ctx.stroke();
+
+    // Level & Score
+    ctx.fillStyle = PAL.gold;
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`第${currentLevel}关`, 10, H - 40);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`得分:${score}`, 10, H - 25);
+
+    // Down & distance - using football icons
+    ctx.textAlign = 'center';
+    for (let i = 1; i <= 4; i++) {
+        const dx = W / 2 - 40 + (i - 1) * 22;
+        const dy = H - 42;
+        if (i <= downs.current) {
+            ctx.fillStyle = i === downs.current ? PAL.gold : '#555';
+        } else {
+            ctx.fillStyle = '#333';
+        }
+        // Mini football shape
+        ctx.beginPath();
+        ctx.ellipse(dx, dy, 6, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (i === downs.current) {
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(dx - 1, dy - 3, 2, 6);
+        }
+    }
+    ctx.fillStyle = '#fff';
+    ctx.font = '10px monospace';
+    ctx.fillText(`${downs.yardsToGo}码 to go`, W / 2, H - 18);
+
+    // Progress bar
+    ctx.fillStyle = '#222';
+    ctx.fillRect(W / 2 - 50, H - 10, 100, 5);
+    const progress = Math.min(1, downs.ballPosition / 40);
+    ctx.fillStyle = PAL.good;
+    ctx.fillRect(W / 2 - 50, H - 10, 100 * progress, 5);
+    ctx.fillStyle = PAL.gold;
+    ctx.fillRect(W / 2 - 50 + 100 * progress - 1, H - 11, 3, 7);
+
+    // QB info
+    ctx.textAlign = 'right';
+    ctx.fillStyle = PAL.qbGold;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(`QB Lv${qbStats.level}`, W - 10, H - 40);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '8px monospace';
+    ctx.fillText(`精准${qbStats.accuracy} 臂力${qbStats.armStrength}`, W - 10, H - 28);
+
+    // Relics display
+    if (relics.length > 0) {
+        ctx.fillStyle = '#666';
+        ctx.font = '8px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(relics.map(r => r.name).join(' '), W - 10, H - 16);
+    }
+}
+
+// ============================================================
+// READ TIMER
+// ============================================================
+function drawReadTimer() {
+    if (gameState !== 'preSnap') return;
+
+    const barW = 200;
+    const barH = 8;
+    const bx = W / 2 - barW / 2;
+    const by = H - 70;
+    const ratio = Math.max(0, readTimer / readTimerMax);
+
+    // Background
+    ctx.fillStyle = '#222';
+    ctx.fillRect(bx, by, barW, barH);
+
+    // Timer bar
+    let barColor;
+    if (ratio > 0.5) barColor = PAL.gold;
+    else if (ratio > 0.25) barColor = '#f39c12';
+    else barColor = PAL.bad;
+
+    ctx.fillStyle = barColor;
+    ctx.fillRect(bx, by, barW * ratio, barH);
+
+    // Border
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, by, barW, barH);
+
+    // Vignette warning when low
+    if (ratio < 0.25) {
+        const alpha = 0.15 + Math.sin(Date.now() / 150) * 0.1;
+        ctx.fillStyle = `rgba(231,76,60,${alpha})`;
+        ctx.fillRect(0, 0, 15, H);
+        ctx.fillRect(W - 15, 0, 15, H);
+        ctx.fillRect(0, 0, W, 15);
+        ctx.fillRect(0, H - 70, W, 15);
+    }
+}
+
+// ============================================================
+// FORMATION INFO
+// ============================================================
 function drawFormationInfo() {
     if (!currentPlay) return;
 
-    // Defense formation name
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(FIELD_W / 2 - 80, 10, 160, 22);
-    ctx.fillStyle = '#fff';
+    // Defense info
+    const defName = defenseDisguised && !hasRelic('filmStudy')
+        ? '???' 
+        : (qbStats.readSpeed >= 3 || hasRelic('filmStudy')
+            ? defenseFormations[currentPlay.defIdx].name
+            : '阅读防守...');
+
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(W / 2 - 85, 10, 170, 20);
+    ctx.fillStyle = PAL.defLight;
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`防守: ${defName}`, W / 2, 25);
+
+    // Disguise warning
+    if (defenseDisguised && hasRelic('echoRadar')) {
+        ctx.fillStyle = PAL.gold;
+        ctx.font = '8px monospace';
+        ctx.fillText('⚠ 伪装防守!', W / 2, 40);
+    }
+
+    // Offense info
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(W / 2 - 85, H - 80, 170, 18);
+    ctx.fillStyle = PAL.offLight;
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`防守: ${defenseFormations[currentPlay.defIdx].name}`, FIELD_W / 2, 26);
-
-    // Offense formation name
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(FIELD_W / 2 - 80, FIELD_H - 62, 160, 22);
-    ctx.fillStyle = '#fff';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`进攻: ${offenseFormations[currentPlay.offIdx].name}`, FIELD_W / 2, FIELD_H - 46);
-}
-
-// Buttons for WR selection
-let wrButtons = [];
-let upgradeButtons = [];
-let genericButtons = [];
-
-function setupWRButtons() {
-    wrButtons = [];
-    if (!currentPlay) return;
-    for (let i = 0; i < 4; i++) {
-        const wr = currentPlay.offense.wrs[i];
-        wrButtons.push({
-            x: wr.x - 15,
-            y: wr.y - 15,
-            w: 30,
-            h: 30,
-            wrIndex: i,
-        });
-    }
-}
-
-function drawChoosePrompt() {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(FIELD_W / 2 - 130, FIELD_H - 90, 260, 28);
-    ctx.fillStyle = C.gold;
-    ctx.font = 'bold 12px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('点击选择你要传球的外接手!', FIELD_W / 2, FIELD_H - 72);
-
-    // Show WR info on hover
-    for (let i = 0; i < 4; i++) {
-        const wr = currentPlay.offense.wrs[i];
-        const stat = wrStats[i];
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(wr.x - 30, wr.y + 22, 60, 28);
-        ctx.fillStyle = '#fff';
-        ctx.font = '7px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(`${stat.name} Lv${stat.level}`, wr.x, wr.y + 33);
-        ctx.fillText(`${wr.route}`, wr.x, wr.y + 43);
-    }
+    ctx.fillText(`进攻: ${offenseFormations[currentPlay.offIdx].name}`, W / 2, H - 66);
 }
 
 // ============================================================
@@ -909,281 +1492,360 @@ function drawChoosePrompt() {
 // ============================================================
 
 function drawTitle() {
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
+    // Background
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, W, H);
 
-    // Pixel art football
-    const cx = FIELD_W / 2;
-    ctx.fillStyle = C.ball;
-    for (let i = -20; i <= 20; i++) {
-        const h = Math.round(Math.sqrt(400 - i * i) * 0.6);
-        ctx.fillRect(cx + i, 180 - h, 1, h * 2);
+    // Animated pixel field background
+    const t = Date.now() / 1000;
+    for (let y = 200; y < 450; y += 4) {
+        for (let x = 50; x < W - 50; x += 4) {
+            const stripe = Math.floor(y / 20) % 2;
+            ctx.fillStyle = stripe ? 'rgba(45,138,78,0.15)' : 'rgba(38,122,67,0.15)';
+            ctx.fillRect(x, y, 3, 3);
+        }
+    }
+
+    // Pixel football
+    const cx = W / 2;
+    ctx.fillStyle = PAL.ball;
+    for (let i = -24; i <= 24; i++) {
+        const h = Math.round(Math.sqrt(576 - i * i) * 0.55);
+        ctx.fillRect(cx + i, 150 - h, 1, h * 2);
     }
     ctx.fillStyle = '#fff';
-    ctx.fillRect(cx - 1, 168, 2, 24);
-    ctx.fillRect(cx - 6, 178, 12, 2);
-    ctx.fillRect(cx - 4, 174, 2, 2);
-    ctx.fillRect(cx + 2, 174, 2, 2);
-    ctx.fillRect(cx - 4, 182, 2, 2);
-    ctx.fillRect(cx + 2, 182, 2, 2);
+    ctx.fillRect(cx - 1, 137, 2, 26);
+    ctx.fillRect(cx - 7, 148, 14, 2);
 
-    ctx.fillStyle = C.accent;
-    ctx.font = 'bold 32px monospace';
+    // Title
+    ctx.fillStyle = PAL.accent;
+    ctx.font = 'bold 36px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('QB CHALLENGE', cx, 250);
+    ctx.fillText('QB CHALLENGE', cx, 220);
 
-    ctx.fillStyle = C.gold;
-    ctx.font = '14px monospace';
-    ctx.fillText('像素腰旗橄榄球', cx, 275);
+    ctx.fillStyle = PAL.gold;
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('像素腰旗橄榄球 v2', cx, 248);
+
+    // Subtitle
+    ctx.fillStyle = '#aaa';
+    ctx.font = '11px monospace';
+    ctx.fillText('阅读防守 · 选择接球手 · 达阵得分', cx, 280);
+
+    // Features
+    ctx.fillStyle = '#666';
+    ctx.font = '9px monospace';
+    const features = [
+        '⊕ Pre-snap阅读防守 + 限时决策',
+        '⊕ 7种进攻阵型 × 6种防守阵型',
+        '⊕ Roguelike升级 + 圣物系统',
+        '⊕ 防守伪装 + 渐进难度',
+        '⊕ 10关达阵挑战',
+    ];
+    features.forEach((f, i) => {
+        ctx.fillText(f, cx, 320 + i * 18);
+    });
+
+    // Start button
+    const btnX = cx - 80, btnY = 430, btnW = 160, btnH = 45;
+    const isHover = mouseX > btnX && mouseX < btnX + btnW && mouseY > btnY && mouseY < btnY + btnH;
+    ctx.fillStyle = isHover ? PAL.accent : PAL.cardBg;
+    ctx.fillRect(btnX, btnY, btnW, btnH);
+    ctx.strokeStyle = PAL.accent;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(btnX, btnY, btnW, btnH);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('开始游戏', cx, btnY + 28);
+
+    genericButtons = [{ x: btnX, y: btnY, w: btnW, h: btnH, action: 'start' }];
+
+    // Controls
+    ctx.fillStyle = '#444';
+    ctx.font = '9px monospace';
+    ctx.fillText('点击选择外接手 | 在时间耗尽前做出决策', cx, 520);
+    ctx.fillText('5v5: 1QB+4WR vs 1冲传手+4DB', cx, 540);
+}
+
+function drawUpgradeScreen() {
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, W, H);
+
+    // TD celebration
+    ctx.fillStyle = PAL.gold;
+    ctx.font = 'bold 24px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('达阵得分!', W / 2, 45);
+
+    ctx.fillStyle = PAL.accent;
+    ctx.font = '13px monospace';
+    ctx.fillText(`进入第 ${currentLevel} 关`, W / 2, 70);
+
+    // Defense buff notice
+    if (defBuffs.length > 0) {
+        const last = defBuffs[defBuffs.length - 1];
+        ctx.fillStyle = PAL.bad;
+        ctx.font = '9px monospace';
+        ctx.fillText(`防守增强: ${last.name} - ${last.desc}`, W / 2, 90);
+    }
 
     ctx.fillStyle = '#aaa';
     ctx.font = '11px monospace';
-    ctx.fillText('阅读防守，选择正确的外接手', cx, 310);
-    ctx.fillText('击败10关越来越强的防守!', cx, 330);
+    ctx.fillText('选择一项升级:', W / 2, 115);
 
-    ctx.fillStyle = '#555';
-    ctx.font = '10px monospace';
-    ctx.fillText('5v5 腰旗橄榄球 x Roguelike', cx, 360);
+    // Upgrade cards
+    upgradeButtons = [];
+    const cardH = upgradeOptions.length > 3 ? 105 : 120;
+    const startY = 130;
 
-    // Start button
-    genericButtons = [{
-        x: cx - 70, y: 400, w: 140, h: 40,
-        text: '开始游戏',
-        action: 'start',
-    }];
-    drawButton(genericButtons[0]);
+    for (let i = 0; i < upgradeOptions.length; i++) {
+        const opt = upgradeOptions[i];
+        const cy = startY + i * (cardH + 12);
+        const cx = 45;
+        const cw = W - 90;
 
-    // Instructions
-    ctx.fillStyle = '#666';
-    ctx.font = '9px monospace';
-    ctx.fillText('进攻: 1 QB + 4 WR', cx, 480);
-    ctx.fillText('防守: 1 冲传手 + 4 防守后卫', cx, 496);
-    ctx.fillText('每关需要推进40码达阵得分', cx, 512);
-    ctx.fillText('4档进攻机会, 选错可能浪费档数', cx, 528);
+        const isHover = mouseX > cx && mouseX < cx + cw && mouseY > cy && mouseY < cy + cardH;
+        upgradeButtons.push({ x: cx, y: cy, w: cw, h: cardH, index: i });
+
+        // Card background
+        ctx.fillStyle = isHover ? '#1a2a50' : PAL.cardBg;
+        ctx.fillRect(cx, cy, cw, cardH);
+
+        // Border color by type
+        const borderColor = opt.type === 'qb' ? PAL.qbGold
+            : opt.type === 'wr' ? PAL.offLight
+            : opt.type === 'relic' ? PAL.gold
+            : PAL.good;
+        ctx.strokeStyle = isHover ? '#fff' : borderColor;
+        ctx.lineWidth = isHover ? 2 : 1.5;
+        ctx.strokeRect(cx, cy, cw, cardH);
+
+        // Icon
+        ctx.fillStyle = borderColor;
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'left';
+        const typeLabel = opt.type === 'qb' ? '🏈 QB升级'
+            : opt.type === 'wr' ? '🧤 WR升级'
+            : opt.type === 'relic' ? '⭐ 圣物'
+            : '🛡 防守减益';
+        ctx.fillText(typeLabel, cx + 12, cy + 24);
+
+        // Name
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(opt.name, W / 2, cy + 50);
+
+        // Description
+        ctx.fillStyle = '#999';
+        ctx.font = '10px monospace';
+        ctx.fillText(opt.desc, W / 2, cy + 72);
+
+        if (opt.type === 'relic') {
+            ctx.fillStyle = PAL.gold;
+            ctx.font = '9px monospace';
+            ctx.fillText('永久被动效果', W / 2, cy + 90);
+        }
+    }
+
+    // Current stats at bottom
+    ctx.fillStyle = '#444';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`QB: 精准${qbStats.accuracy} 臂力${qbStats.armStrength} 阅读${qbStats.readSpeed}`, 20, H - 35);
+    const wrInfo = wrStats.map(w => `${w.name}:${w.speed}/${w.catching}/${w.routeRunning}`).join(' ');
+    ctx.fillText(wrInfo, 20, H - 20);
+    if (relics.length > 0) {
+        ctx.fillStyle = PAL.gold;
+        ctx.fillText(`圣物: ${relics.map(r => r.name).join(', ')}`, 20, H - 8);
+    }
 }
 
-function drawButton(btn, hover) {
-    ctx.fillStyle = hover ? C.buttonHover : C.buttonBg;
+function drawGameOver() {
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = PAL.bad;
+    ctx.font = 'bold 30px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', W / 2, 200);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px monospace';
+    ctx.fillText('进攻档数用尽!', W / 2, 240);
+
+    ctx.fillStyle = PAL.gold;
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText(`得分: ${score}`, W / 2, 290);
+    ctx.font = '14px monospace';
+    ctx.fillText(`到达第 ${currentLevel} 关`, W / 2, 320);
+
+    // Stats
+    ctx.fillStyle = '#888';
+    ctx.font = '10px monospace';
+    ctx.fillText(`QB: 精准${qbStats.accuracy} 臂力${qbStats.armStrength}`, W / 2, 360);
+    ctx.fillText(`圣物: ${relics.length}`, W / 2, 380);
+
+    genericButtons = [{
+        x: W / 2 - 70, y: 420, w: 140, h: 40, text: '重新开始', action: 'restart',
+    }];
+    drawButtonRect(genericButtons[0]);
+}
+
+function drawVictory() {
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, W, H);
+
+    // Confetti
+    for (let i = 0; i < 60; i++) {
+        const colors = [PAL.gold, PAL.accent, PAL.good, PAL.offLight, '#fff'];
+        ctx.fillStyle = colors[i % colors.length];
+        const px = (Math.sin(i * 73.7 + Date.now() / 800) * 0.5 + 0.5) * W;
+        const py = (Math.sin(i * 37.3 + Date.now() / 600) * 0.5 + 0.5) * 300;
+        ctx.fillRect(px, py, 4, 4);
+    }
+
+    ctx.fillStyle = PAL.gold;
+    ctx.font = 'bold 30px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('恭喜通关!', W / 2, 180);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px monospace';
+    ctx.fillText('击败全部10关!', W / 2, 220);
+
+    ctx.fillStyle = PAL.accent;
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText(`最终得分: ${score}`, W / 2, 270);
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '11px monospace';
+    ctx.fillText(`QB Lv${qbStats.level} | 精准${qbStats.accuracy} 臂力${qbStats.armStrength}`, W / 2, 320);
+    ctx.fillText(`圣物: ${relics.map(r => r.name).join(', ') || '无'}`, W / 2, 345);
+    ctx.fillText(`防守增强: ${defBuffs.length} | 减益: ${offDebuffs.length}`, W / 2, 370);
+
+    genericButtons = [{
+        x: W / 2 - 70, y: 420, w: 140, h: 40, text: '再来一次', action: 'restart',
+    }];
+    drawButtonRect(genericButtons[0]);
+}
+
+function drawButtonRect(btn) {
+    const isHover = mouseX > btn.x && mouseX < btn.x + btn.w && mouseY > btn.y && mouseY < btn.y + btn.h;
+    ctx.fillStyle = isHover ? PAL.accent : PAL.cardBg;
     ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
-    ctx.strokeStyle = C.accent;
+    ctx.strokeStyle = PAL.accent;
     ctx.lineWidth = 2;
     ctx.strokeRect(btn.x, btn.y, btn.w, btn.h);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 14px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(btn.text, btn.x + btn.w / 2, btn.y + btn.h / 2 + 5);
+    ctx.fillText(btn.text || '', btn.x + btn.w / 2, btn.y + btn.h / 2 + 5);
 }
 
-function drawUpgradeScreen() {
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
-
-    ctx.fillStyle = C.gold;
-    ctx.font = 'bold 20px monospace';
+function drawChoosePrompt() {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(W / 2 - 140, H - 100, 280, 24);
+    ctx.fillStyle = PAL.gold;
+    ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('达阵得分!', FIELD_W / 2, 50);
+    ctx.fillText('选择你要传球的外接手!', W / 2, H - 82);
 
-    ctx.fillStyle = C.accent;
-    ctx.font = '14px monospace';
-    ctx.fillText(`进入第 ${currentLevel} 关`, FIELD_W / 2, 80);
+    // WR info cards
+    for (let i = 0; i < 4; i++) {
+        const wr = currentPlay.offense.wrs[i];
+        const stat = wrStats[i];
+        const isHover = i === hoveredWR;
 
-    ctx.fillStyle = '#aaa';
-    ctx.font = '11px monospace';
-    ctx.fillText('选择一项升级:', FIELD_W / 2, 110);
+        ctx.fillStyle = isHover ? 'rgba(255,215,0,0.15)' : 'rgba(0,0,0,0.5)';
+        ctx.fillRect(wr.x - 32, wr.y + 25, 64, 30);
 
-    // Defense buff notice
-    if (defBuffs.length > 0) {
-        const lastBuff = defBuffs[defBuffs.length - 1];
-        ctx.fillStyle = '#e74c3c';
-        ctx.font = '10px monospace';
-        ctx.fillText(`防守获得增强: ${lastBuff.name}`, FIELD_W / 2, 130);
-    }
+        if (isHover) {
+            ctx.strokeStyle = PAL.gold;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(wr.x - 32, wr.y + 25, 64, 30);
+        }
 
-    upgradeButtons = [];
-    for (let i = 0; i < upgradeOptions.length; i++) {
-        const opt = upgradeOptions[i];
-        const y = 160 + i * 120;
-
-        const btn = { x: 40, y, w: FIELD_W - 80, h: 100, index: i };
-        upgradeButtons.push(btn);
-
-        ctx.fillStyle = C.buttonBg;
-        ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
-        ctx.strokeStyle = i === 0 ? C.gold : i === 1 ? C.offenseMain : '#2ecc71';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(btn.x, btn.y, btn.w, btn.h);
-
-        const typeLabel = opt.type === 'qb' ? '[四分卫升级]' : opt.type === 'wr' ? '[外接手升级]' : '[防守减益]';
-        ctx.fillStyle = i === 0 ? C.gold : i === 1 ? C.offenseLight : '#2ecc71';
-        ctx.font = 'bold 12px monospace';
+        ctx.fillStyle = isHover ? PAL.gold : '#fff';
+        ctx.font = 'bold 8px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(typeLabel, FIELD_W / 2, y + 25);
-
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 14px monospace';
-        ctx.fillText(opt.name, FIELD_W / 2, y + 50);
+        ctx.fillText(`${stat.name} Lv${stat.level}`, wr.x, wr.y + 37);
 
         ctx.fillStyle = '#aaa';
-        ctx.font = '11px monospace';
-        ctx.fillText(opt.desc, FIELD_W / 2, y + 72);
+        ctx.font = '7px monospace';
+        ctx.fillText(`S${stat.speed} C${stat.catching} R${stat.routeRunning}`, wr.x, wr.y + 48);
     }
-
-    // Show current stats
-    ctx.fillStyle = '#555';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`QB: 精准${qbStats.accuracy} 臂力${qbStats.armStrength}`, 20, FIELD_H - 40);
-    let wrInfo = wrStats.map(w => `${w.name}:S${w.speed}/C${w.catching}/R${w.routeRunning}`).join('  ');
-    ctx.fillText(wrInfo, 20, FIELD_H - 25);
 }
 
-function drawResultScreen() {
+function drawResultOverlay() {
     if (!simState) return;
+    const text = simState.success ? '接球成功!' : '传球失败!';
+    const sub = simState.success
+        ? `+${simState.yardsGained}码 | 成功率${Math.round(simState.catchProb)}%`
+        : `成功率${Math.round(simState.catchProb)}%`;
+    const col = simState.success ? PAL.good : PAL.bad;
 
-    // Draw field and players in final positions
-    drawField();
-
-    // Draw players in final positions
-    for (let i = 0; i < 4; i++) {
-        const isChosen = i === simState.chosenWR;
-        drawPixelPlayer(
-            simState.wrPositions[i].x, simState.wrPositions[i].y,
-            C.offenseMain, true, isChosen,
-            wrStats[i].name, false
-        );
-    }
-    for (let i = 0; i < 4; i++) {
-        drawPixelPlayer(
-            simState.dbPositions[i].x, simState.dbPositions[i].y,
-            C.defenseMain, false, false, 'DB' + (i + 1), false
-        );
-    }
-    drawPixelPlayer(simState.rusherPos.x, simState.rusherPos.y, C.defenseLight, false, false, 'RUSH', false);
-    drawPixelPlayer(simState.qbPos.x, simState.qbPos.y, C.qb, true, false, 'QB', true);
-
-    // Draw ball at target
-    if (simState.ballPos) {
-        drawBall(simState.ballTarget.x, simState.ballTarget.y);
+    // Flash effect on success
+    if (simState.success && simState.timer < 0.1) {
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.fillRect(0, 0, W, H);
     }
 
-    // Result overlay
-    if (simState.phase === 'catch' || simState.phase === 'result') {
-        const text = simState.success ? '接球成功!' : '传球失败!';
-        const subText = simState.success ? `+${simState.yardsGained}码` : '没有推进';
-        const color = simState.success ? C.highlightGood : C.highlightBad;
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(W / 2 - 130, 240, 260, 100);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(W / 2 - 130, 240, 260, 100);
 
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(FIELD_W / 2 - 100, 260, 200, 70);
-
-        ctx.fillStyle = color;
-        ctx.font = 'bold 22px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(text, FIELD_W / 2, 290);
-
-        ctx.fillStyle = '#fff';
-        ctx.font = '14px monospace';
-        ctx.fillText(subText, FIELD_W / 2, 315);
-
-        // Show best WR info
-        if (!simState.success || simState.chosenWR !== currentPlay.bestWR) {
-            ctx.fillStyle = C.gold;
-            ctx.font = '10px monospace';
-            ctx.fillText(`最佳选择: ${wrStats[currentPlay.bestWR].name} (${currentPlay.offense.wrs[currentPlay.bestWR].route})`,
-                FIELD_W / 2, 340);
-        }
-    }
-}
-
-function drawGameOver() {
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
-
-    ctx.fillStyle = C.highlightBad;
-    ctx.font = 'bold 28px monospace';
+    ctx.fillStyle = col;
+    ctx.font = 'bold 24px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('GAME OVER', FIELD_W / 2, 200);
+    ctx.fillText(text, W / 2, 275);
 
     ctx.fillStyle = '#fff';
-    ctx.font = '14px monospace';
-    ctx.fillText('进攻档数用尽!', FIELD_W / 2, 240);
+    ctx.font = '12px monospace';
+    ctx.fillText(sub, W / 2, 300);
 
-    ctx.fillStyle = C.gold;
-    ctx.font = '16px monospace';
-    ctx.fillText(`最终得分: ${score}`, FIELD_W / 2, 280);
-    ctx.fillText(`到达第 ${currentLevel} 关`, FIELD_W / 2, 310);
-
-    genericButtons = [{
-        x: FIELD_W / 2 - 70, y: 360, w: 140, h: 40,
-        text: '重新开始',
-        action: 'restart',
-    }];
-    drawButton(genericButtons[0]);
-}
-
-function drawVictory() {
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
-
-    // Celebration pixels
-    for (let i = 0; i < 50; i++) {
-        ctx.fillStyle = [C.gold, C.accent, C.highlightGood, C.offenseLight][i % 4];
-        const px = Math.random() * FIELD_W;
-        const py = Math.random() * 300;
-        ctx.fillRect(px, py + Math.sin(Date.now() / 500 + i) * 10, 4, 4);
+    if (simState.chosenWR !== currentPlay.bestWR) {
+        ctx.fillStyle = PAL.gold;
+        ctx.font = '10px monospace';
+        const bestRoute = currentPlay.offense.wrs[currentPlay.bestWR].route;
+        ctx.fillText(`最佳选择: ${wrStats[currentPlay.bestWR].name} (${bestRoute})`, W / 2, 325);
     }
-
-    ctx.fillStyle = C.gold;
-    ctx.font = 'bold 28px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('恭喜通关!', FIELD_W / 2, 200);
-
-    ctx.fillStyle = '#fff';
-    ctx.font = '16px monospace';
-    ctx.fillText('你击败了所有10关!', FIELD_W / 2, 240);
-
-    ctx.fillStyle = C.accent;
-    ctx.font = '20px monospace';
-    ctx.fillText(`最终得分: ${score}`, FIELD_W / 2, 290);
-
-    // Stats
-    ctx.fillStyle = '#aaa';
-    ctx.font = '11px monospace';
-    ctx.fillText(`QB 精准:${qbStats.accuracy} 臂力:${qbStats.armStrength}`, FIELD_W / 2, 340);
-    ctx.fillText(`防守增强数: ${defBuffs.length}`, FIELD_W / 2, 360);
-    ctx.fillText(`获得减益数: ${offDebuffs.length}`, FIELD_W / 2, 380);
-
-    genericButtons = [{
-        x: FIELD_W / 2 - 70, y: 420, w: 140, h: 40,
-        text: '再来一次',
-        action: 'restart',
-    }];
-    drawButton(genericButtons[0]);
 }
 
 // ============================================================
-// INPUT HANDLING
+// INPUT
 // ============================================================
-
 let mouseX = 0, mouseY = 0;
-let hoveredWR = -1;
-let hoveredButton = -1;
+let genericButtons = [];
+let upgradeButtons = [];
 
 function getCanvasPos(e) {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = FIELD_W / rect.width;
-    const scaleY = FIELD_H / rect.height;
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return {
-        x: (clientX - rect.left) * scaleX,
-        y: (clientY - rect.top) * scaleY,
-    };
+    const sx = W / rect.width, sy = H / rect.height;
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (cx - rect.left) * sx, y: (cy - rect.top) * sy };
 }
 
 canvas.addEventListener('mousemove', (e) => {
     const pos = getCanvasPos(e);
     mouseX = pos.x;
     mouseY = pos.y;
+
+    // Update hovered WR
+    hoveredWR = -1;
+    if ((gameState === 'preSnap' || gameState === 'choosing') && currentPlay) {
+        for (let i = 0; i < 4; i++) {
+            const wr = currentPlay.offense.wrs[i];
+            const dx = mouseX - wr.x, dy = mouseY - wr.y;
+            if (dx * dx + dy * dy < 25 * 25) {
+                hoveredWR = i;
+                break;
+            }
+        }
+    }
 });
 
 canvas.addEventListener('click', handleClick);
@@ -1192,54 +1854,59 @@ canvas.addEventListener('touchstart', (e) => {
     const pos = getCanvasPos(e);
     mouseX = pos.x;
     mouseY = pos.y;
+
+    // Update hover for touch
+    hoveredWR = -1;
+    if ((gameState === 'preSnap' || gameState === 'choosing') && currentPlay) {
+        for (let i = 0; i < 4; i++) {
+            const wr = currentPlay.offense.wrs[i];
+            const dx = mouseX - wr.x, dy = mouseY - wr.y;
+            if (dx * dx + dy * dy < 30 * 30) {
+                hoveredWR = i;
+                break;
+            }
+        }
+    }
+
     handleClick(e);
 });
 
 function handleClick(e) {
-    const pos = e.touches ? { x: mouseX, y: mouseY } : getCanvasPos(e);
+    initAudio();
+    const pos = { x: mouseX, y: mouseY };
 
     switch (gameState) {
         case 'title':
             for (const btn of genericButtons) {
-                if (isInside(pos, btn)) {
-                    if (btn.action === 'start') startNewGame();
+                if (isInside(pos, btn) && btn.action === 'start') {
+                    playSound('select');
+                    startNewGame();
                 }
             }
             break;
 
+        case 'preSnap':
         case 'choosing':
-            for (const btn of wrButtons) {
-                if (isInside(pos, btn)) {
-                    startSimulation(btn.wrIndex);
-                    return;
+            // Click on WR
+            if (currentPlay) {
+                for (let i = 0; i < 4; i++) {
+                    const wr = currentPlay.offense.wrs[i];
+                    const dx = pos.x - wr.x, dy = pos.y - wr.y;
+                    if (dx * dx + dy * dy < 30 * 30) {
+                        playSound('select');
+                        startSimulation(i);
+                        return;
+                    }
                 }
             }
-            // Also allow clicking on WR labels area
-            for (let i = 0; i < 4; i++) {
-                const wr = currentPlay.offense.wrs[i];
-                if (pos.x > wr.x - 30 && pos.x < wr.x + 30 && pos.y > wr.y - 20 && pos.y < wr.y + 50) {
-                    startSimulation(i);
-                    return;
-                }
-            }
-            break;
-
-        case 'result':
-            // Click anywhere to continue
-            gameState = 'formation';
-            generatePlay();
-            setupWRButtons();
-            setTimeout(() => { gameState = 'choosing'; }, 300);
             break;
 
         case 'upgrade':
             for (const btn of upgradeButtons) {
                 if (isInside(pos, btn)) {
                     applyUpgrade(btn.index);
-                    gameState = 'formation';
-                    generatePlay();
-                    setupWRButtons();
-                    setTimeout(() => { gameState = 'choosing'; }, 300);
+                    gameState = 'transition';
+                    transitionTimer = 0;
                     return;
                 }
             }
@@ -1248,8 +1915,9 @@ function handleClick(e) {
         case 'gameOver':
         case 'victory':
             for (const btn of genericButtons) {
-                if (isInside(pos, btn)) {
-                    if (btn.action === 'restart') startNewGame();
+                if (isInside(pos, btn) && btn.action === 'restart') {
+                    playSound('select');
+                    startNewGame();
                 }
             }
             break;
@@ -1264,7 +1932,6 @@ function isInside(pos, rect) {
 // ============================================================
 // GAME FLOW
 // ============================================================
-
 function startNewGame() {
     currentLevel = 1;
     score = 0;
@@ -1278,132 +1945,122 @@ function startNewGame() {
     ];
     defBuffs = [];
     offDebuffs = [];
+    relics = [];
+    particles = [];
 
     generatePlay();
-    setupWRButtons();
-    gameState = 'choosing';
+    gameState = 'preSnap';
 }
 
 // ============================================================
 // MAIN GAME LOOP
 // ============================================================
-
 let lastTime = 0;
-
-function drawResultOverlay() {
-    if (!simState) return;
-    const text = simState.success ? '接球成功!' : '传球失败!';
-    const subText = simState.success ? `+${simState.yardsGained}码 | 成功率:${Math.round(simState.catchProb)}%` : `成功率:${Math.round(simState.catchProb)}%`;
-    const color = simState.success ? C.highlightGood : C.highlightBad;
-
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(FIELD_W / 2 - 120, 250, 240, 90);
-
-    ctx.fillStyle = color;
-    ctx.font = 'bold 22px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(text, FIELD_W / 2, 280);
-
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px monospace';
-    ctx.fillText(subText, FIELD_W / 2, 305);
-
-    if (simState.chosenWR !== currentPlay.bestWR) {
-        ctx.fillStyle = C.gold;
-        ctx.font = '10px monospace';
-        ctx.fillText(`最佳: ${wrStats[currentPlay.bestWR].name} (${currentPlay.offense.wrs[currentPlay.bestWR].route})`,
-            FIELD_W / 2, 330);
-    }
-}
-
-function isInsideCircle(mx, my, cx, cy, r) {
-    return (mx - cx) * (mx - cx) + (my - cy) * (my - cy) < r * r;
-}
-
-let lastUpgradeLevel = 0;
-
-function checkUpgradeGeneration() {
-    if (gameState === 'upgrade' && currentLevel !== lastUpgradeLevel) {
-        generateUpgradeOptions();
-        lastUpgradeLevel = currentLevel;
-    }
-}
+let animFrame = 0;
+let lastTickTime = 0;
 
 function gameLoop(timestamp) {
     const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
     lastTime = timestamp;
+    animFrame++;
 
-    ctx.clearRect(0, 0, FIELD_W, FIELD_H);
+    // Update systems
+    updateShake(dt);
+    updateCamera(dt);
+    updateParticles(dt);
 
-    if (gameState === 'upgrade') {
-        checkUpgradeGeneration();
-        drawUpgradeScreen();
-        requestAnimationFrame(gameLoop);
-        return;
-    }
+    ctx.clearRect(0, 0, W, H);
+
+    // Apply camera + shake
+    ctx.save();
+    ctx.translate(shake.x + camera.x, shake.y + camera.y);
 
     switch (gameState) {
         case 'title':
+            ctx.restore();
             drawTitle();
-            break;
+            requestAnimationFrame(gameLoop);
+            return;
 
-        case 'formation':
-        case 'choosing':
+        case 'preSnap':
+            // Update read timer
+            readTimer -= dt;
+            if (readTimer <= readTimerMax * 0.25 && !readTimerWarning) {
+                readTimerWarning = true;
+                playSound('warning');
+            }
+            // Tick sound
+            if (readTimer > 0 && readTimer < readTimerMax * 0.5) {
+                if (timestamp - lastTickTime > 500) {
+                    playSound('tick');
+                    lastTickTime = timestamp;
+                }
+            }
+            if (readTimer <= 0) {
+                readTimer = 0;
+                // Auto-snap: force random choice with penalty
+                // Player can still choose but with penalty
+            }
+
             drawField();
             drawRouteLines();
+            if (hoveredWR >= 0) drawOpennessFan(hoveredWR);
             drawFormationInfo();
 
+            // Draw defense (shown formation, may be disguise)
             if (currentPlay) {
+                const shownDef = defenseDisguised ? defenseShownFormation : currentPlay.defense;
+
+                // Pre-snap DB motion hints
+                for (let i = 0; i < 4; i++) {
+                    const db = shownDef.dbs[i];
+                    let dbX = db.x, dbY = db.y;
+                    // Man coverage hint: drift toward WR
+                    if (db.role === 'man' && db.coverIdx >= 0) {
+                        const wr = currentPlay.offense.wrs[db.coverIdx];
+                        dbX += Math.sin(timestamp / 800) * 3;
+                        dbY += (wr.y - db.y) * 0.05 * Math.sin(timestamp / 1000);
+                    }
+                    // Zone hint: drift toward zone area
+                    if (db.role === 'deep') {
+                        dbY += Math.sin(timestamp / 1200 + i) * 2;
+                    }
+                    drawPixelSprite(dbX, dbY, 'db', false, false, 'DB' + (i + 1), animFrame);
+                }
+                drawPixelSprite(shownDef.rusher.x, shownDef.rusher.y, 'rusher', false, false, 'RUSH', animFrame);
+
+                // Draw offense
                 for (let i = 0; i < 4; i++) {
                     const wr = currentPlay.offense.wrs[i];
-                    const isHover = isInsideCircle(mouseX, mouseY, wr.x, wr.y, 20);
-                    drawPixelPlayer(wr.x, wr.y, C.offenseMain, true, isHover,
-                        wrStats[i].name, false);
+                    drawPixelSprite(wr.x, wr.y, 'wr', true, i === hoveredWR, wrStats[i].name, animFrame);
                 }
-                drawPixelPlayer(currentPlay.offense.qb.x, currentPlay.offense.qb.y,
-                    C.qb, true, false, 'QB', true);
-
-                for (let i = 0; i < 4; i++) {
-                    const db = currentPlay.defense.dbs[i];
-                    drawPixelPlayer(db.x, db.y, C.defenseMain, false, false, 'DB' + (i + 1), false);
-                }
-                drawPixelPlayer(currentPlay.defense.rusher.x, currentPlay.defense.rusher.y,
-                    C.defenseLight, false, false, 'RUSH', false);
+                drawPixelSprite(currentPlay.offense.qb.x, currentPlay.offense.qb.y, 'qb', true, false, 'QB', animFrame);
             }
 
-            if (gameState === 'choosing') {
-                drawChoosePrompt();
-            }
+            drawChoosePrompt();
+            drawReadTimer();
             drawHUD();
             break;
 
         case 'simulation':
             updateSimulation(dt);
             drawField();
+            drawRouteLines();
 
             if (simState) {
-                drawRouteLines();
-
                 for (let i = 0; i < 4; i++) {
                     const isChosen = i === simState.chosenWR;
-                    drawPixelPlayer(
-                        simState.wrPositions[i].x, simState.wrPositions[i].y,
-                        isChosen ? C.offenseLight : C.offenseMain,
-                        true, isChosen, wrStats[i].name, false
-                    );
+                    drawPixelSprite(simState.wrPositions[i].x, simState.wrPositions[i].y,
+                        'wr', true, isChosen, isChosen ? wrStats[i].name : '', animFrame);
                 }
                 for (let i = 0; i < 4; i++) {
-                    drawPixelPlayer(
-                        simState.dbPositions[i].x, simState.dbPositions[i].y,
-                        C.defenseMain, false, false, '', false
-                    );
+                    drawPixelSprite(simState.dbPositions[i].x, simState.dbPositions[i].y,
+                        'db', false, false, '', animFrame);
                 }
-                drawPixelPlayer(simState.rusherPos.x, simState.rusherPos.y,
-                    C.defenseLight, false, false, '', false);
-                drawPixelPlayer(simState.qbPos.x, simState.qbPos.y,
-                    C.qb, true, false, 'QB', true);
+                drawPixelSprite(simState.rusherPos.x, simState.rusherPos.y, 'rusher', false, false, '', animFrame);
+                drawPixelSprite(simState.qbPos.x, simState.qbPos.y, 'qb', true, false, 'QB', animFrame);
 
-                if (simState.ballPos && (simState.phase === 'throw' || simState.phase === 'catch' || simState.phase === 'result')) {
+                if (simState.ballPos && simState.phase !== 'snap' && simState.phase !== 'routes') {
                     drawBall(simState.ballPos.x, simState.ballPos.y);
                 }
 
@@ -1416,46 +2073,48 @@ function gameLoop(timestamp) {
             drawHUD();
             break;
 
-        case 'result':
+        case 'transition':
+            transitionTimer += dt;
+            // Quick fade
             drawField();
-            drawRouteLines();
-            drawFormationInfo();
-
-            if (currentPlay) {
-                for (let i = 0; i < 4; i++) {
-                    const wr = currentPlay.offense.wrs[i];
-                    const isBest = i === currentPlay.bestWR;
-                    drawPixelPlayer(wr.x, wr.y, C.offenseMain, true, isBest, wrStats[i].name, false);
-                }
-                drawPixelPlayer(currentPlay.offense.qb.x, currentPlay.offense.qb.y,
-                    C.qb, true, false, 'QB', true);
-                for (let i = 0; i < 4; i++) {
-                    const db = currentPlay.defense.dbs[i];
-                    drawPixelPlayer(db.x, db.y, C.defenseMain, false, false, '', false);
-                }
-            }
-
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(FIELD_W / 2 - 100, FIELD_H / 2 + 80, 200, 30);
-            ctx.fillStyle = '#fff';
-            ctx.font = '12px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText('点击继续下一档', FIELD_W / 2, FIELD_H / 2 + 100);
-
             drawHUD();
+            ctx.fillStyle = `rgba(0,0,0,${Math.min(1, transitionTimer * 3)})`;
+            ctx.fillRect(0, 0, W, H);
+
+            if (transitionTimer > 0.4) {
+                generatePlay();
+                gameState = 'preSnap';
+            }
             break;
+
+        case 'upgrade':
+            ctx.restore();
+            drawUpgradeScreen();
+            drawParticles();
+            requestAnimationFrame(gameLoop);
+            return;
 
         case 'gameOver':
+            ctx.restore();
             drawGameOver();
-            break;
+            requestAnimationFrame(gameLoop);
+            return;
 
         case 'victory':
+            ctx.restore();
             drawVictory();
-            break;
+            drawParticles();
+            requestAnimationFrame(gameLoop);
+            return;
     }
+
+    ctx.restore();
+
+    // Draw particles on top (no camera transform)
+    drawParticles();
 
     requestAnimationFrame(gameLoop);
 }
 
-// Start the game
+// Start
 requestAnimationFrame(gameLoop);
