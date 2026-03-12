@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>QB Challenge V13 — 3D Dynasty</title>
+<style>
+/* ============================================================
+   RESET & GLOBAL
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  background: #0a0e1a;
+  font-family: -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  color: #eee;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#game-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  top: 0; left: 0;
+  z-index: 0;
+}
+
+/* ============================================================
+   LOADING SCREEN
+   ============================================================ */
+#loading-screen {
+  position: fixed; inset: 0;
+  background: #0a0e1a;
+  display: flex; flex-direction: column;
+  justify-content: center; align-items: center;
+  z-index: 1000;
+}
+#loading-screen h1 {
+  font-size: 32px; font-weight: 900;
+  letter-spacing: 6px; color: #fff;
+  text-shadow: 0 0 20px rgba(30,144,255,0.5);
+}
+#loading-screen .sub {
+  font-size: 11px; color: #888;
+  letter-spacing: 3px; margin: 6px 0 24px;
+}
+.load-bar { width: 240px; height: 3px; background: #222; border-radius: 2px; overflow: hidden; }
+#load-fill { width: 0; height: 100%; background: linear-gradient(90deg, #1e90ff, #ffd700); transition: width 0.3s; }
+#load-status { margin-top: 10px; font-size: 10px; color: #555; }
+
+/* ============================================================
+   SCORE BUG (TV-style)
+   ============================================================ */
+#score-bug {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 50;
+  background: rgba(8,10,20,0.92);
+  border: 1px solid rgba(30,144,255,0.4);
+  border-radius: 6px;
+  padding: 6px 14px;
+  display: flex; gap: 16px; align-items: center;
+  font-size: 11px; font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+#score-bug.hidden { display: none; }
+#sb-score { color: #ffd700; font-size: 16px; font-weight: 900; }
+#sb-down { color: #1e90ff; font-weight: 700; }
+#sb-info { color: #999; font-size: 10px; }
+#sb-dc { color: #ff8844; font-size: 10px; }
+#sb-level { color: #22cc44; font-size: 10px; font-weight: 700; }
+
+/* ============================================================
+   POISE METER
+   ============================================================ */
+#poise-meter {
+  position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
+  z-index: 50;
+  background: rgba(8,10,20,0.88);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 4px 12px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 9px;
+}
+#poise-meter.hidden { display: none; }
+#poise-bar { display: flex; gap: 2px; }
+#poise-bar .seg { width: 6px; height: 10px; background: #222; border-radius: 1px; }
+#poise-bar .on-green { background: #22cc44; }
+#poise-bar .on-yellow { background: #ffcc00; }
+#poise-bar .on-red { background: #ee3333; }
+#poise-value { font-weight: 700; min-width: 20px; text-align: right; }
+#poise-status { font-weight: 600; font-size: 8px; letter-spacing: 1px; }
+
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+#top-bar {
+  position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 50;
+  background: rgba(8,10,20,0.85);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 4px 12px;
+  display: flex; gap: 12px; align-items: center;
+  font-size: 9px; color: #888;
+}
+#top-bar.hidden { display: none; }
+#tb-formation { color: #1e90ff; font-weight: 600; }
+#tb-defense { color: #ee3333; }
+#tb-dc { color: #ff8844; }
+#tb-qb-stats { color: #ccc; }
+#tb-weather { color: #aaa; }
+
+/* ============================================================
+   RELICS BAR
+   ============================================================ */
+#relics-bar {
+  position: fixed; top: 80px; left: 12px;
+  z-index: 50;
+  font-size: 14px;
+  line-height: 1.6;
+}
+#relics-bar.hidden { display: none; }
+
+/* ============================================================
+   FORMATION BADGE
+   ============================================================ */
+#formation-badge {
+  position: fixed; top: 80px; right: 12px;
+  z-index: 50;
+  background: rgba(30,58,95,0.8);
+  border: 1px solid rgba(30,144,255,0.3);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 10px; font-weight: 600;
+  color: #1e90ff;
+}
+#formation-badge.hidden { display: none; }
+
+/* ============================================================
+   READING PROMPT
+   ============================================================ */
+#reading-prompt {
+  position: fixed; top: 48%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 60;
+  text-align: center;
+}
+#reading-prompt.hidden { display: none; }
+#reading-prompt h2 {
+  font-size: 14px; color: #ffd700;
+  text-shadow: 0 0 10px rgba(255,215,0,0.3);
+  margin-bottom: 8px;
+}
+.reading-bar {
+  width: 180px; height: 4px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px; overflow: hidden;
+  margin: 0 auto;
+}
+#reading-fill {
+  width: 0; height: 100%;
+  background: linear-gradient(90deg, #1e90ff, #ffd700);
+  transition: width 0.05s linear;
+}
+
+/* ============================================================
+   READING ACTIONS
+   ============================================================ */
+#reading-actions {
+  position: fixed; bottom: 50px; left: 50%; transform: translateX(-50%);
+  z-index: 60;
+  display: flex; gap: 8px;
+}
+#reading-actions.hidden { display: none; }
+.action-btn {
+  background: rgba(15,20,35,0.92);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 4px;
+  padding: 8px 16px;
+  color: #fff; font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.action-btn:hover { background: rgba(30,144,255,0.3); border-color: #1e90ff; }
+.action-btn:active { transform: scale(0.95); }
+
+/* ============================================================
+   MOTION RESULT
+   ============================================================ */
+#motion-result {
+  position: fixed; top: 40%; left: 50%; transform: translateX(-50%);
+  z-index: 61;
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-weight: 700; font-size: 13px;
+  text-align: center;
+  animation: fadeSlideUp 0.4s ease-out;
+}
+#motion-result.hidden { display: none; }
+#motion-result.man { background: rgba(200,30,30,0.9); color: #fff; border: 1px solid #ee3333; }
+#motion-result.zone { background: rgba(30,120,30,0.9); color: #fff; border: 1px solid #22cc44; }
+
+/* ============================================================
+   WR SELECT
+   ============================================================ */
+#wr-select {
+  position: fixed; bottom: 50px; left: 50%; transform: translateX(-50%);
+  z-index: 60;
+  text-align: center;
+}
+#wr-select.hidden { display: none; }
+#wr-select h3 {
+  font-size: 11px; color: #ffd700;
+  margin-bottom: 8px; letter-spacing: 1px;
+}
+#wr-cards {
+  display: flex; gap: 6px; justify-content: center;
+}
+.wr-card {
+  background: rgba(10,15,30,0.94);
+  border: 2px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 80px;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+  overflow: hidden;
+}
+.wr-card:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.4); }
+.wr-card:active { transform: scale(0.97); }
+.wr-card .color-stripe {
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+}
+.wr-card .name { font-size: 11px; font-weight: 700; margin-top: 2px; }
+.wr-card .stats { font-size: 8px; color: #888; margin-top: 2px; }
+.wr-card .route { font-size: 9px; color: #1e90ff; font-weight: 600; margin-top: 3px; text-transform: uppercase; }
+.wr-card .prob { font-size: 16px; font-weight: 900; margin-top: 3px; }
+.wr-card .prob.high { color: #22cc44; }
+.wr-card .prob.mid { color: #ffcc00; }
+.wr-card .prob.low { color: #ee3333; }
+.wr-card .trust-bar { width: 100%; height: 2px; background: #222; border-radius: 1px; margin-top: 4px; }
+.wr-card .trust-fill { height: 100%; border-radius: 1px; transition: width 0.3s; }
+
+/* ============================================================
+   PASS TYPE PANEL
+   ============================================================ */
+#pass-type-panel {
+  position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+  z-index: 70;
+  background: rgba(8,10,22,0.95);
+  border: 1px solid rgba(30,144,255,0.3);
+  border-radius: 8px;
+  padding: 14px 18px;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.7);
+}
+#pass-type-panel.hidden { display: none; }
+#pt-title { font-size: 11px; color: #ccc; margin-bottom: 8px; }
+.pass-btns { display: flex; gap: 8px; margin-bottom: 8px; }
+.pass-btn {
+  flex: 1;
+  padding: 10px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(20,25,40,0.9);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+.pass-btn:hover { border-color: #1e90ff; background: rgba(30,60,100,0.5); }
+.pass-btn:active { transform: scale(0.95); }
+.pass-btn .icon { font-size: 20px; }
+.pass-btn .label { font-size: 10px; font-weight: 700; margin-top: 3px; color: #fff; }
+.pass-btn .desc { font-size: 8px; color: #888; margin-top: 2px; }
+.pt-timer { width: 100%; height: 3px; background: #222; border-radius: 2px; overflow: hidden; }
+#pt-timer-fill { width: 100%; height: 100%; background: #1e90ff; transition: width 0.05s linear; }
+
+/* ============================================================
+   SCRAMBLE PANEL
+   ============================================================ */
+#scramble-panel {
+  position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+  z-index: 70;
+  background: rgba(20,10,10,0.95);
+  border: 2px solid #ee3333;
+  border-radius: 8px;
+  padding: 14px 20px;
+  text-align: center;
+  animation: shake 0.3s ease;
+  box-shadow: 0 0 30px rgba(200,30,30,0.3);
+}
+#scramble-panel.hidden { display: none; }
+#scramble-panel h3 { color: #ee3333; font-size: 14px; margin-bottom: 6px; }
+#scramble-dir { color: #ff8844; font-size: 11px; margin-bottom: 8px; }
+.scramble-btns { display: flex; gap: 6px; margin-bottom: 8px; }
+.s-btn {
+  flex: 1;
+  padding: 10px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(30,20,20,0.9);
+  cursor: pointer;
+  transition: all 0.15s;
+  color: #fff;
+  font-weight: 600;
+  font-size: 10px;
+}
+.s-btn:hover { border-color: #ffd700; background: rgba(60,40,20,0.8); }
+.scramble-timer { width: 100%; height: 3px; background: #222; border-radius: 2px; overflow: hidden; }
+#scramble-timer-fill { width: 100%; height: 100%; background: #ffcc00; transition: width 0.05s linear; }
+
+/* ============================================================
+   RESULT OVERLAY
+   ============================================================ */
+#result-overlay {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 80;
+  background: rgba(5,8,18,0.95);
+  border: 2px solid #1e90ff;
+  border-radius: 8px;
+  padding: 20px 32px;
+  text-align: center;
+  min-width: 220px;
+  animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.7);
+  cursor: pointer;
+}
+#result-overlay.hidden { display: none; }
+#res-text { font-size: 22px; font-weight: 900; letter-spacing: 2px; }
+#res-detail { font-size: 13px; color: #ccc; margin-top: 6px; }
+#res-sub { font-size: 10px; color: #888; margin-top: 4px; }
+
+/* ============================================================
+   COMMENTARY
+   ============================================================ */
+#commentary {
+  position: fixed; top: 100px; right: 16px;
+  z-index: 50;
+  max-width: 260px;
+  text-align: right;
+}
+.comment-line {
+  color: rgba(255,255,255,0.85);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  margin-bottom: 4px;
+  background: rgba(8,10,20,0.7);
+  border-radius: 3px;
+  border-right: 2px solid rgba(30,144,255,0.4);
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+/* ============================================================
+   PANEL CONTAINER (full screen overlays)
+   ============================================================ */
+#panel-container {
+  position: fixed; inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+.panel {
+  position: absolute; inset: 0;
+  background: rgba(5,8,18,0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 20px;
+  pointer-events: auto;
+  overflow-y: auto;
+  animation: fadeIn 0.4s ease;
+}
+.panel h1 { font-size: 28px; font-weight: 900; letter-spacing: 3px; margin-bottom: 4px; }
+.panel h2 { font-size: 14px; font-weight: 600; color: #ccc; margin-bottom: 12px; }
+.panel .subtitle { font-size: 10px; color: #666; letter-spacing: 1px; margin-bottom: 16px; }
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  padding: 10px 24px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(20,25,40,0.9);
+  color: #fff;
+  font-weight: 600; font-size: 13px;
+  cursor: pointer;
+  margin: 4px;
+  transition: all 0.15s;
+}
+.btn:hover { border-color: rgba(255,255,255,0.4); background: rgba(40,50,80,0.8); }
+.btn:active { transform: scale(0.97); }
+.btn.primary { background: rgba(30,90,180,0.8); border-color: #1e90ff; }
+.btn.primary:hover { background: rgba(40,110,220,0.8); }
+.btn.gold { background: rgba(180,130,0,0.4); border-color: #ffd700; color: #ffd700; }
+.btn.gold:hover { background: rgba(200,150,0,0.5); }
+.btn.green { background: rgba(30,120,50,0.5); border-color: #22cc44; }
+.btn.red { background: rgba(120,30,30,0.5); border-color: #ee3333; }
+
+/* Map grid */
+.map-grid { width: 100%; max-width: 400px; }
+.map-row {
+  display: flex; justify-content: center; gap: 8px;
+  padding: 4px 0;
+  position: relative;
+}
+.map-node {
+  width: 56px; padding: 6px 4px;
+  border: 1.5px solid #444;
+  border-radius: 6px;
+  text-align: center;
+  background: rgba(20,20,35,0.9);
+  cursor: default;
+  transition: all 0.15s;
+}
+.map-node .icon { font-size: 16px; }
+.map-node .label { font-size: 7px; font-weight: 600; margin-top: 2px; }
+.map-node.accessible { cursor: pointer; border-style: solid; }
+.map-node.accessible:hover { transform: scale(1.05); background: rgba(30,30,50,0.9); }
+.map-node.visited { opacity: 0.4; }
+.map-node.current { box-shadow: 0 0 8px rgba(30,144,255,0.5); }
+
+/* Upgrade cards */
+.upgrade-card {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; max-width: 340px;
+  padding: 12px 16px;
+  background: rgba(15,18,32,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  margin: 4px 0;
+  transition: all 0.15s;
+}
+.upgrade-card:hover { border-color: #ffd700; background: rgba(25,28,45,0.95); transform: translateX(4px); }
+.upgrade-card .icon { font-size: 24px; }
+.upgrade-card .info .type-badge {
+  font-size: 8px; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px;
+  letter-spacing: 1px;
+}
+.upgrade-card .info .name { font-weight: 700; font-size: 13px; margin-top: 2px; }
+.upgrade-card .info .desc { font-size: 10px; color: #888; margin-top: 2px; }
+
+/* Shop */
+.shop-item {
+  display: flex; justify-content: space-between;
+  width: 100%; max-width: 300px;
+  padding: 10px 14px;
+  background: rgba(15,18,32,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  margin: 3px 0;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.shop-item:hover { border-color: #ffd700; }
+.shop-item.bought { opacity: 0.4; cursor: default; }
+.shop-item .cost { color: #ffd700; font-weight: 700; }
+
+/* Halftime */
+.halftime-stats { display: flex; gap: 12px; margin: 12px 0; }
+.halftime-stats .half {
+  flex: 1; padding: 10px;
+  background: rgba(15,18,32,0.95);
+  border: 1px solid; border-radius: 6px;
+  text-align: center;
+}
+.halftime-stats .half .big { font-size: 28px; font-weight: 900; color: #ffd700; }
+
+/* Highlight plays */
+.highlight-plays { text-align: center; margin-top: 4px; }
+.highlight-play { font-size: 10px; color: #ccc; padding: 2px 0; }
+
+/* ============================================================
+   ANIMATIONS
+   ============================================================ */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeSlideUp { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+@keyframes popIn { from { opacity: 0; transform: translate(-50%, -50%) scale(0.8); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes shake { 0%, 100% { transform: translateX(-50%); } 25% { transform: translateX(-52%); } 75% { transform: translateX(-48%); } }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 600px) {
+  #score-bug { font-size: 9px; padding: 4px 8px; gap: 8px; }
+  #sb-score { font-size: 13px; }
+  .wr-card { min-width: 68px; padding: 6px 6px; }
+  .wr-card .prob { font-size: 14px; }
+  .wr-card .name { font-size: 9px; }
+  .panel h1 { font-size: 22px; }
+  .panel h2 { font-size: 12px; }
+  #commentary { max-width: 180px; }
+  .comment-line { font-size: 9px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loading-screen">
+  <h1>QB CHALLENGE</h1>
+  <div class="sub">3D DYNASTY · V13</div>
+  <div class="load-bar"><div id="load-fill"></div></div>
+  <div id="load-status">Initializing...</div>
+</div>
+
+<!-- 3D Canvas -->
+<canvas id="game-canvas"></canvas>
+
+<!-- Score Bug -->
+<div id="score-bug" class="hidden">
+  <span id="sb-score">0</span>
+  <span id="sb-down">1ST & 20</span>
+  <span id="sb-info">OWN 5</span>
+  <span id="sb-dc"></span>
+  <span id="sb-level">L1</span>
+</div>
+
+<!-- Poise Meter -->
+<div id="poise-meter" class="hidden">
+  <div id="poise-bar"></div>
+  <span id="poise-value">100</span>
+  <span id="poise-status">COOL</span>
+</div>
+
+<!-- Top/Bottom Bar -->
+<div id="top-bar" class="hidden">
+  <span id="tb-formation"></span>
+  <span id="tb-defense"></span>
+  <span id="tb-dc"></span>
+  <span id="tb-qb-stats"></span>
+  <span id="tb-weather"></span>
+</div>
+
+<!-- Relics Bar -->
+<div id="relics-bar" class="hidden"></div>
+
+<!-- Formation Badge -->
+<div id="formation-badge" class="hidden"></div>
+
+<!-- Reading Phase -->
+<div id="reading-prompt" class="hidden">
+  <h2>📖 READ THE DEFENSE</h2>
+  <div class="reading-bar"><div id="reading-fill"></div></div>
+</div>
+
+<!-- Reading Actions -->
+<div id="reading-actions" class="hidden"></div>
+
+<!-- Motion Result -->
+<div id="motion-result" class="hidden"></div>
+
+<!-- WR Select -->
+<div id="wr-select" class="hidden">
+  <h3>SELECT YOUR TARGET</h3>
+  <div id="wr-cards"></div>
+</div>
+
+<!-- Pass Type Panel -->
+<div id="pass-type-panel" class="hidden">
+  <div id="pt-title">选择传球类型</div>
+  <div class="pass-btns">
+    <div class="pass-btn" data-type="bullet">
+      <div class="icon">🔴</div>
+      <div class="label">BULLET</div>
+      <div class="desc">快·低·短距离有效</div>
+    </div>
+    <div class="pass-btn" data-type="touch">
+      <div class="icon">🟡</div>
+      <div class="label">TOUCH</div>
+      <div class="desc">平衡·精准·万能</div>
+    </div>
+    <div class="pass-btn" data-type="lob">
+      <div class="icon">🔵</div>
+      <div class="label">LOB</div>
+      <div class="desc">高弧线·深区有效</div>
+    </div>
+  </div>
+  <div class="pt-timer"><div id="pt-timer-fill"></div></div>
+</div>
+
+<!-- Scramble Panel -->
+<div id="scramble-panel" class="hidden">
+  <h3>⚡ PRESSURE!</h3>
+  <div id="scramble-dir"></div>
+  <div class="scramble-btns">
+    <div class="s-btn" data-dir="left">← 左闪</div>
+    <div class="s-btn" data-dir="stand_tall">🧱 硬扛</div>
+    <div class="s-btn" data-dir="right">右闪 →</div>
+  </div>
+  <div class="scramble-timer"><div id="scramble-timer-fill"></div></div>
+</div>
+
+<!-- Result Overlay -->
+<div id="result-overlay" class="hidden">
+  <div id="res-text"></div>
+  <div id="res-detail"></div>
+  <div id="res-sub"></div>
+</div>
+
+<!-- Commentary -->
+<div id="commentary"></div>
+
+<!-- Audio Controls -->
+<div id="audio-controls" style="position:fixed;bottom:8px;right:12px;z-index:50;display:flex;align-items:center;gap:6px;">
+  <button id="mute-btn" onclick="window._toggleMute()" style="background:rgba(8,10,20,0.85);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:4px 8px;color:#fff;font-size:16px;cursor:pointer;transition:all 0.15s;">🔊</button>
+  <input id="vol-slider" type="range" min="0" max="100" value="50" oninput="window._setVolume(this.value)" style="width:60px;height:3px;accent-color:#1e90ff;cursor:pointer;">
+</div>
+
+<!-- Panel Container (menus/overlays) -->
+<div id="panel-container"></div>
+
+<!-- Three.js Library -->
+<script src="../lib/three.min.js"></script>
+<script src="../lib/CopyShader.js"></script>
+<script src="../lib/LuminosityHighPassShader.js"></script>
+<script src="../lib/BokehShader.js"></script>
+<script src="../lib/EffectComposer.js"></script>
+<script src="../lib/RenderPass.js"></script>
+<script src="../lib/ShaderPass.js"></script>
+<script src="../lib/UnrealBloomPass.js"></script>
+<script src="../lib/BokehPass.js"></script>
+
+<!-- Game Code -->
+<script src="v13.1-3d-polished.js"></script>
+
+</body>
+</html>

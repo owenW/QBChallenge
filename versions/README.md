@@ -1,5 +1,9 @@
 # QBChallenge Version Archive
 
+## ⚠️ RULE: Each index.html MUST reference its own JS file, NOT "game.js"
+## When adding a new version: copy index.html, then sed 's/game.js/vN-name.js/' 
+## NEVER leave src="game.js" in any versions/ HTML file
+
 Each version preserved as `vN-name.js` + `vN-index.html`.
 
 | Version | File | Description |
