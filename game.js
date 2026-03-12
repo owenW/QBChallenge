@@ -592,23 +592,23 @@ const offenseFormations = [
 
 const defenseFormations = [
   { name: 'Cover 1', desc: '人盯人+自由安全卫', coverType: 'man',
-    getPositions: (losY) => ({ rusher: { yard: losY - 8, lane: 30, fast: false },
+    getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: false },
       dbs: [{ yard: losY + 5, lane: 10, role: 'man', coverIdx: 0 }, { yard: losY + 5, lane: 22, role: 'man', coverIdx: 1 },
             { yard: losY + 5, lane: 38, role: 'man', coverIdx: 2 }, { yard: losY + 8, lane: 50, role: 'free', coverIdx: -1 }] }) },
   { name: 'Cover 2', desc: '两深区域防守', coverType: 'zone',
-    getPositions: (losY) => ({ rusher: { yard: losY - 8, lane: 30, fast: false },
+    getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: false },
       dbs: [{ yard: losY + 12, lane: 15, role: 'deep', coverIdx: -1 }, { yard: losY + 12, lane: 45, role: 'deep', coverIdx: -1 },
             { yard: losY + 4, lane: 18, role: 'flat', coverIdx: -1 }, { yard: losY + 4, lane: 42, role: 'flat', coverIdx: -1 }] }) },
   { name: 'Cover 3', desc: '三深区域防守', coverType: 'zone',
-    getPositions: (losY) => ({ rusher: { yard: losY - 8, lane: 30, fast: false },
+    getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: false },
       dbs: [{ yard: losY + 14, lane: 12, role: 'deep', coverIdx: -1 }, { yard: losY + 15, lane: 30, role: 'deep', coverIdx: -1 },
             { yard: losY + 14, lane: 48, role: 'deep', coverIdx: -1 }, { yard: losY + 4, lane: 30, role: 'flat', coverIdx: -1 }] }) },
   { name: 'Cover 4', desc: '四深区域防守', coverType: 'zone',
-    getPositions: (losY) => ({ rusher: { yard: losY - 8, lane: 30, fast: false },
+    getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: false },
       dbs: [{ yard: losY + 11, lane: 10, role: 'deep', coverIdx: -1 }, { yard: losY + 11, lane: 24, role: 'deep', coverIdx: -1 },
             { yard: losY + 11, lane: 38, role: 'deep', coverIdx: -1 }, { yard: losY + 11, lane: 52, role: 'deep', coverIdx: -1 }] }) },
   { name: 'Man Blitz', desc: '全面突袭', coverType: 'blitz',
-    getPositions: (losY) => ({ rusher: { yard: losY - 8, lane: 30, fast: true },
+    getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: true },
       dbs: [{ yard: losY + 3, lane: 10, role: 'man', coverIdx: 0 }, { yard: losY + 3, lane: 22, role: 'man', coverIdx: 1 },
             { yard: losY + 3, lane: 38, role: 'man', coverIdx: 2 }, { yard: losY + 3, lane: 50, role: 'man', coverIdx: 3 }] }) },
 ];
@@ -1798,16 +1798,20 @@ function updateSimulation(dt) {
       const throwDuration = game.passType === 'bullet' ? 0.4 : game.passType === 'lob' ? 0.7 : 0.55;
       sim.throwProgress = Math.min(1, sim.timer / throwDuration);
       sim.throwPowerTimer -= sd;
-      sim.ballPos.yard = sim.qbPos.yard + (sim.ballTarget.yard - sim.qbPos.yard) * sim.throwProgress;
-      sim.ballPos.lane = sim.qbPos.lane + (sim.ballTarget.lane - sim.qbPos.lane) * sim.throwProgress;
-      sim.ballTrail.push({ ...sim.ballPos }); if (sim.ballTrail.length > 8) sim.ballTrail.shift();
-      if (sim.throwProgress > 0.6) TimeScale.set(0.5, 0.3);
+      // Update WR positions first so ball tracks to current WR position
       for (let i = 0; i < 4; i++) {
         const path = routePaths[currentPlay.offense.wrs[i].route](currentPlay.offense.wrs[i].yard, currentPlay.offense.wrs[i].lane);
         const end = path[path.length - 1];
         sim.wrPos[i].yard += (end.yard - sim.wrPos[i].yard) * 0.05;
         sim.wrPos[i].lane += (end.lane - sim.wrPos[i].lane) * 0.05;
       }
+      // Continuously update ball target to track chosen WR's current position
+      sim.ballTarget.yard = sim.wrPos[sim.chosenWR].yard;
+      sim.ballTarget.lane = sim.wrPos[sim.chosenWR].lane;
+      sim.ballPos.yard = sim.qbPos.yard + (sim.ballTarget.yard - sim.qbPos.yard) * sim.throwProgress;
+      sim.ballPos.lane = sim.qbPos.lane + (sim.ballTarget.lane - sim.qbPos.lane) * sim.throwProgress;
+      sim.ballTrail.push({ ...sim.ballPos }); if (sim.ballTrail.length > 8) sim.ballTrail.shift();
+      if (sim.throwProgress > 0.6) TimeScale.set(0.5, 0.3);
       if (sim.throwProgress >= 1) {
         sim.phase = 'catch'; sim.timer = 0; TimeScale.set(0.3, 0.3);
         Camera.setForPhase('catch');
@@ -1886,7 +1890,7 @@ function handlePlayResult() {
     Commentary.teamComment(getCurrentTeam(), 'int');
     if (game.playsThisGame >= game.maxPlaysPerGame) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
     // Reset drive
-    game.ballYardLine = 5; game.downs.current = 1; game.gotFirstDown = false; game.firstDownLine = 25;
+    game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
   } else if (sim.success) {
     consecutiveCatches++; game.seasonStats.completions++;
     const yards = sim.yardsGained;
@@ -1906,7 +1910,7 @@ function handlePlayResult() {
       game.gameScore.player += 7;
       reduceStress(10);
       // Reset for next drive
-      game.ballYardLine = 5; game.downs.current = 1; game.gotFirstDown = false; game.firstDownLine = 25;
+      game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
       // Opponent also scores sometimes
       if (Math.random() < 0.3 + game.gameNum * 0.05) game.gameScore.opponent += 7;
       if (game.playsThisGame >= game.maxPlaysPerGame) {
@@ -1920,16 +1924,17 @@ function handlePlayResult() {
         sim = null; return;
       }
     } else {
-      if (!game.gotFirstDown && game.ballYardLine >= game.firstDownLine) {
-        game.gotFirstDown = true; game.downs.current = 1;
-        game.firstDownLine = 50; addParticle(W / 2, 300, 'confetti', 12);
+      if (game.ballYardLine >= game.firstDownLine) {
+        game.downs.current = 1;
+        game.firstDownLine = Math.min(50, game.firstDownLine + 20);
+        addParticle(W / 2, 300, 'confetti', 12);
         Commentary.generate('first_down');
       } else {
         game.downs.current++;
         if (game.downs.current > 4) {
           // Turnover on downs - opponent gets points sometimes
           if (Math.random() < 0.4) game.gameScore.opponent += 3;
-          game.ballYardLine = 5; game.downs.current = 1; game.gotFirstDown = false; game.firstDownLine = 25;
+          game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
           if (game.playsThisGame >= game.maxPlaysPerGame) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
         }
       }
@@ -1939,7 +1944,7 @@ function handlePlayResult() {
     game.downs.current++;
     if (game.downs.current > 4) {
       if (Math.random() < 0.3) game.gameScore.opponent += 3;
-      game.ballYardLine = 5; game.downs.current = 1; game.gotFirstDown = false; game.firstDownLine = 25;
+      game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
       if (game.playsThisGame >= game.maxPlaysPerGame) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
     }
   }
@@ -2106,7 +2111,8 @@ function drawScoreBug() {
   ctx.fillText(String(game.gameScore.player), bX + bW - 8, bY + 32);
 
   // Down & distance
-  const dt2 = `${game.downs.current}${['ST','ND','RD','TH'][Math.min(game.downs.current - 1, 3)]} & ${game.gotFirstDown ? 'GL' : (game.firstDownLine - game.ballYardLine)}`;
+  const ydsToGo = game.firstDownLine >= 50 ? (50 - game.ballYardLine) : (game.firstDownLine - game.ballYardLine);
+  const dt2 = `第${game.downs.current}档 & ${ydsToGo > 0 ? ydsToGo + '码' : 'GOAL'}`;
   ctx.fillStyle = COL.uiGold; ctx.font = 'bold 9px "Courier New"'; ctx.textAlign = 'center';
   drawPixelRect(ctx, W / 2 - 40, bY + 6, 80, 16, 'rgba(212,168,64,0.15)', COL.uiGold);
   ctx.fillText(dt2, W / 2, bY + 17);
@@ -3226,7 +3232,7 @@ function handleClick(e) {
     case 'betweenGame':
       for (const btn of genericButtons) {
         if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
-          if (btn.action === 'between_rest') { reduceStress(25); game.downs.current = 1; game.ballYardLine = 5; game.gotFirstDown = false; game.firstDownLine = 25; game.state = 'rest'; }
+          if (btn.action === 'between_rest') { reduceStress(25); game.downs.current = 1; game.ballYardLine = 5; game.firstDownLine = 25; game.state = 'rest'; }
           else if (btn.action === 'between_shop') { generateShop(); game.state = 'shop'; }
           else if (btn.action === 'between_event') { currentEvent = EVENTS[Math.floor(Math.random() * EVENTS.length)]; game.state = 'event'; }
           else if (btn.action === 'between_training') { game.state = 'training'; }
@@ -3334,7 +3340,7 @@ function handleClick(e) {
 function startNewGame() {
   Career.load(); const legacyBonus = Career.getLegacyBonus();
   game.state = 'seasonMap'; game.ballYardLine = 5; game.downs = { current: 1, max: 4 };
-  game.firstDownLine = 25; game.gotFirstDown = false; game.score = 0;
+  game.firstDownLine = 25; game.score = 0;
   game.gameNum = 1; game.losses = 0; game.stress = 0; game.gold = 100;
   game.audiblesLeft = 1; game.weatherDebuff = 0; game.scoutReport = false;
   game.readingPhase = false; game.readingTimer = 0; game.weatherType = 'normal';
@@ -3364,7 +3370,7 @@ function startNewGame() {
 }
 
 function startGame(gameIdx) {
-  game.ballYardLine = 5; game.downs.current = 1; game.gotFirstDown = false; game.firstDownLine = 25;
+  game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
   game.playsThisGame = 0; game.gameScore = { player: 0, opponent: 0 };
   game.halftimeShown = false; game.teamWrPicks = [0,0,0,0];
   game.audiblesLeft = 1 + (hasRelic('audible_master') ? 1 : 0);
