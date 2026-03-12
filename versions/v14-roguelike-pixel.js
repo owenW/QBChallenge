@@ -3020,9 +3020,35 @@ function drawSimulationScreen(dt) {
 
 function drawPlayResult() {
   Camera.beginTransform(); drawField(); drawRouteLines(0.15, 1); Camera.endTransform(); Weather.drawParticles(ctx);
-  drawPixelRect(ctx, W / 2 - 80, H / 2 + 30, 160, 30, COL.cardBg, COL.cardBorder);
-  ctx.fillStyle = COL.parchment; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
-  ctx.fillText('点击继续下一档', W / 2, H / 2 + 48);
+  // Show play result summary
+  const resultH = 90;
+  drawPixelRect(ctx, W / 2 - 110, H / 2 - 20, 220, resultH, COL.cardBg, COL.cardBorder);
+  ctx.textAlign = 'center';
+  if (sim && sim.success) {
+    ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 14px "Courier New"';
+    ctx.fillText(`✅ 接球成功！+${sim.yardsGained}码`, W / 2, H / 2);
+    if (sim.yacYards > 0) {
+      ctx.fillStyle = COL.uiGold; ctx.font = '11px "Courier New"';
+      const yacMsg = sim.yacType === 'wide_open' ? `接球后狂奔+${sim.yacYards}码！` :
+                     sim.yacType === 'room_to_run' ? `接球后推进+${sim.yacYards}码` :
+                     sim.yacType === 'flag_pull' ? `被拔旗，推进+${sim.yacYards}码` : '';
+      ctx.fillText(yacMsg, W / 2, H / 2 + 16);
+    }
+  } else if (sim && sim.isSack) {
+    ctx.fillStyle = COL.uiRed; ctx.font = 'bold 14px "Courier New"';
+    ctx.fillText(`💥 SACK! -${sim.sackYards || 5}码`, W / 2, H / 2);
+  } else if (sim && sim.isINT) {
+    ctx.fillStyle = COL.uiRed; ctx.font = 'bold 14px "Courier New"';
+    ctx.fillText('🏴 INTERCEPTION!', W / 2, H / 2);
+  } else {
+    ctx.fillStyle = '#ff6644'; ctx.font = 'bold 14px "Courier New"';
+    ctx.fillText('❌ INCOMPLETE', W / 2, H / 2);
+  }
+  // Show field position
+  ctx.fillStyle = COL.parchment; ctx.font = '10px "Courier New"';
+  ctx.fillText(`球在 ${game.ballYardLine}码线 | 第${game.downs.current}档`, W / 2, H / 2 + 38);
+  ctx.fillStyle = '#888'; ctx.font = '9px "Courier New"';
+  ctx.fillText('点击继续', W / 2, H / 2 + 55);
   drawTopBar(); drawPoiseRating(); drawRelicsBar(); drawScoreBug(); drawParticles(); Commentary.draw(ctx);
 }
 
