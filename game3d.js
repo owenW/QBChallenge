@@ -126,6 +126,15 @@ function createStadiumLights() {
   });
 }
 
+// Sky hemisphere for atmosphere
+const skyGeo = new THREE.SphereGeometry(200, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.5);
+const skyMat = new THREE.MeshBasicMaterial({
+  color: 0x4488cc, side: THREE.BackSide, fog: false,
+});
+const sky = new THREE.Mesh(skyGeo, skyMat);
+sky.position.y = -5;
+scene.add(sky);
+
 // Resize handler
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -426,6 +435,30 @@ function createStadium() {
     head.position.set(x, 30, z);
     group.add(head);
   });
+
+  // Goal posts at end zones
+  const goalPostMat = new THREE.MeshStandardMaterial({ color: 0xffdd00, roughness: 0.3, metalness: 0.5 });
+  for (const zSide of [-1, 1]) {
+    const gpZ = zSide * (FIELD_LENGTH / 2 + 10 * YARD_SCALE);
+    // Main post
+    const postGeo = new THREE.CylinderGeometry(0.12, 0.15, 12, 6);
+    const post = new THREE.Mesh(postGeo, goalPostMat);
+    post.position.set(0, 6, gpZ);
+    group.add(post);
+    // Crossbar
+    const crossGeo = new THREE.CylinderGeometry(0.08, 0.08, 8, 6);
+    const cross = new THREE.Mesh(crossGeo, goalPostMat);
+    cross.position.set(0, 12, gpZ);
+    cross.rotation.z = Math.PI / 2;
+    group.add(cross);
+    // Uprights
+    for (const side of [-1, 1]) {
+      const upGeo = new THREE.CylinderGeometry(0.07, 0.07, 8, 6);
+      const up = new THREE.Mesh(upGeo, goalPostMat);
+      up.position.set(side * 4, 16, gpZ);
+      group.add(up);
+    }
+  }
 
   // Scoreboard behind end zone
   const boardGeo = new THREE.BoxGeometry(20, 8, 1);
@@ -1097,9 +1130,36 @@ function createMarkerLines() {
   scene.add(fdLine);
 }
 
+let downArrow = null;
+function createDownArrow() {
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0.8);
+  shape.lineTo(0.4, 0);
+  shape.lineTo(0.15, 0);
+  shape.lineTo(0.15, -0.8);
+  shape.lineTo(-0.15, -0.8);
+  shape.lineTo(-0.15, 0);
+  shape.lineTo(-0.4, 0);
+  shape.lineTo(0, 0.8);
+  const geo = new THREE.ShapeGeometry(shape);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+  downArrow = new THREE.Mesh(geo, mat);
+  downArrow.rotation.x = -Math.PI / 2;
+  downArrow.position.y = 0.05;
+  scene.add(downArrow);
+}
+
 function updateMarkerLines() {
   if (losLine) losLine.position.z = yardToZ(game.ballYardLine);
   if (fdLine) fdLine.position.z = yardToZ(game.firstDownLine);
+  // Position down arrow between LOS and first down
+  if (downArrow) {
+    const midYard = (game.ballYardLine + game.firstDownLine) / 2;
+    downArrow.position.z = yardToZ(midYard);
+    downArrow.position.x = 0;
+    const scale = Math.max(1, (game.firstDownLine - game.ballYardLine) * 0.15);
+    downArrow.scale.set(scale, scale, 1);
+  }
 }
 
 // ============================================================
@@ -1780,43 +1840,38 @@ function updateWeatherVisuals() {
   if (weather === 'day') {
     scene.background = new THREE.Color(0x6aafe6);
     scene.fog = new THREE.FogExp2(0x6aafe6, 0.003);
-    sunLight.color.setHex(0xffeedd);
-    sunLight.intensity = 1.4;
-    ambientLight.color.setHex(0x668899);
-    ambientLight.intensity = 0.4;
+    sunLight.color.setHex(0xffeedd); sunLight.intensity = 1.4;
+    ambientLight.color.setHex(0x668899); ambientLight.intensity = 0.4;
     renderer.toneMappingExposure = 1.0;
+    skyMat.color.setHex(0x6aafe6);
   } else if (weather === 'dusk') {
     scene.background = new THREE.Color(0xdd7744);
     scene.fog = new THREE.FogExp2(0xdd7744, 0.004);
-    sunLight.color.setHex(0xffaa55);
-    sunLight.intensity = 1.0;
-    ambientLight.color.setHex(0xcc8866);
-    ambientLight.intensity = 0.35;
+    sunLight.color.setHex(0xffaa55); sunLight.intensity = 1.0;
+    ambientLight.color.setHex(0xcc8866); ambientLight.intensity = 0.35;
     renderer.toneMappingExposure = 0.9;
+    skyMat.color.setHex(0xee8855);
   } else if (weather === 'night') {
     scene.background = new THREE.Color(0x080e22);
     scene.fog = new THREE.FogExp2(0x080e22, 0.006);
-    sunLight.color.setHex(0x445577);
-    sunLight.intensity = 0.2;
-    ambientLight.color.setHex(0x223355);
-    ambientLight.intensity = 0.3;
+    sunLight.color.setHex(0x445577); sunLight.intensity = 0.2;
+    ambientLight.color.setHex(0x223355); ambientLight.intensity = 0.3;
     renderer.toneMappingExposure = 0.7;
+    skyMat.color.setHex(0x0a1225);
   } else if (weather === 'rain') {
     scene.background = new THREE.Color(0x2a3a4a);
     scene.fog = new THREE.FogExp2(0x2a3a4a, 0.007);
-    sunLight.color.setHex(0x889999);
-    sunLight.intensity = 0.5;
-    ambientLight.color.setHex(0x667788);
-    ambientLight.intensity = 0.45;
+    sunLight.color.setHex(0x889999); sunLight.intensity = 0.5;
+    ambientLight.color.setHex(0x667788); ambientLight.intensity = 0.45;
     renderer.toneMappingExposure = 0.75;
+    skyMat.color.setHex(0x3a4a5a);
   } else if (weather === 'snow') {
     scene.background = new THREE.Color(0xc8d0e0);
     scene.fog = new THREE.FogExp2(0xc8d0e0, 0.006);
-    sunLight.color.setHex(0xdde0ee);
-    sunLight.intensity = 0.6;
-    ambientLight.color.setHex(0xccccee);
-    ambientLight.intensity = 0.5;
+    sunLight.color.setHex(0xdde0ee); sunLight.intensity = 0.6;
+    ambientLight.color.setHex(0xccccee); ambientLight.intensity = 0.5;
     renderer.toneMappingExposure = 0.85;
+    skyMat.color.setHex(0xd0d8e8);
   }
 }
 
@@ -2011,8 +2066,9 @@ function initScene() {
     scene.add(target);
   }
 
-  // Marker lines
+  // Marker lines and down arrow
   createMarkerLines();
+  createDownArrow();
 
   // Weather
   createWeatherParticles();
@@ -2433,20 +2489,39 @@ function updateSimulation(dt) {
       break;
 
     case 'tdCelebration':
-      // Continuous confetti
-      if (Math.random() < 0.4) {
-        const confPos = new THREE.Vector3((Math.random() - 0.5) * 30, 12, yardToZ(50) + (Math.random() - 0.5) * 15);
+      // Continuous confetti from above
+      if (Math.random() < 0.5) {
+        const confPos = new THREE.Vector3((Math.random() - 0.5) * 30, 14, yardToZ(50) + (Math.random() - 0.5) * 15);
         addParticles3D(confPos,
-          [0xffd700, 0xffffff, 0x1e90ff, 0x22cc44, 0xee3333][Math.floor(Math.random() * 5)],
-          2, 2, 2.5, { shape: 'confetti', gravity: -2 });
+          [0xffd700, 0xffffff, 0x1e90ff, 0x22cc44, 0xee3333, 0xff66aa][Math.floor(Math.random() * 6)],
+          3, 2.5, 3, { shape: 'confetti', gravity: -1.5 });
       }
-      // Animate celebration — players jump
+      // Ground burst
+      if (sim.timer < 1.5 && Math.random() < 0.3) {
+        const burstPos = new THREE.Vector3((Math.random() - 0.5) * 15, 0.5, yardToZ(50));
+        addParticles3D(burstPos, 0xffd700, 5, 4, 1.2, { sizeMin: 0.03, sizeMax: 0.08 });
+      }
+      // Celebration animations
       playerObjects.wrs.forEach((wr, i) => {
-        wr.position.y = Math.abs(Math.sin(game.time * 5 + i * 1.5)) * 0.8;
-        wr.rotation.y = game.time * 3;
+        const phase = game.time * 5 + i * 1.5;
+        // Jump with arms up
+        wr.position.y = Math.abs(Math.sin(phase)) * 1.0;
+        wr.rotation.y = game.time * 2 + i;
+        const armGroup = wr.getObjectByName('armGroup');
+        if (armGroup) {
+          const ra = armGroup.getObjectByName('rightArm');
+          const la = armGroup.getObjectByName('leftArm');
+          if (ra) { ra.rotation.x = -1.5 + Math.sin(phase * 2) * 0.3; ra.rotation.z = 0.3; }
+          if (la) { la.rotation.x = -1.5 + Math.sin(phase * 2 + 1) * 0.3; la.rotation.z = -0.3; }
+        }
       });
-      // QB fist pump
-      playerObjects.qb.position.y = Math.abs(Math.sin(game.time * 4)) * 0.5;
+      // QB fist pump with arm animation
+      playerObjects.qb.position.y = Math.abs(Math.sin(game.time * 4)) * 0.6;
+      const qbArm = playerObjects.qb.getObjectByName('armGroup');
+      if (qbArm) {
+        const ra = qbArm.getObjectByName('rightArm');
+        if (ra) ra.rotation.x = -1.8 + Math.sin(game.time * 6) * 0.5;
+      }
 
       if (sim.timer > 3) {
         sim.phase = 'result'; sim.timer = 0;
