@@ -52,12 +52,15 @@ camera.lookAt(0, 0, 0);
 const cameraState = {
   target: new THREE.Vector3(0, 0, 0),
   offset: new THREE.Vector3(55, 35, 10),
-  lerpSpeed: 0.035,
+  lerpSpeed: 0.06,
+  lookAtLerpSpeed: 0.08,
+  _smoothLookAt: new THREE.Vector3(0, 0, 0),
+  _smoothLookAtInit: false,
   shakeIntensity: 0,
   shakeDecay: 0.92,
   heroZoom: false,
   heroTimer: 0,
-  currentAngle: 'broadcast', // 'broadcast', 'endzone', 'closeup'
+  currentAngle: 'broadcast',
   transitionProgress: 1,
 };
 
@@ -929,7 +932,7 @@ function createPlayer(config) {
   // --- Materials ---
   const jerseyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.05, skinning: true });
   const pantsMat = new THREE.MeshStandardMaterial({
-    color: isQB ? 0x1e3a5f : (color === 0xcc2222 ? 0xeeeeee : 0x1e3a5f),
+    color: isQB ? 0x1e3a5f : (color === 0xcc2222 ? 0x1a1a1a : 0x1e3a5f),
     roughness: 0.7, skinning: true,
   });
   const skinMat = new THREE.MeshStandardMaterial({ color: 0xc68642, roughness: 0.7, skinning: true });
@@ -1056,23 +1059,31 @@ function createPlayer(config) {
 
   // --- Decorative elements attached to bones ---
 
-  // Shoulder pads — attached to chest bone
-  const padGeo = new THREE.BoxGeometry(0.38*W*2.8, 0.16, 0.38*W*2.0);
+  // Shoulder pads — wider plate shapes, visible on all players
+  const padColor = isQB ? 0xe8e8e8 : (color === 0xcc2222 ? 0x222222 : 0xe8e8e8);
   const padMat = new THREE.MeshStandardMaterial({
-    color: isQB ? 0xe8e8e8 : (color === 0xcc2222 ? 0xbb2020 : 0xe8e8e8),
-    roughness: 0.4, metalness: 0.2,
+    color: padColor, roughness: 0.35, metalness: 0.25,
   });
+  // Main pad plate
+  const padGeo = new THREE.BoxGeometry(0.42*W*2.8, 0.14, 0.36*W*2.0);
   const pads = new THREE.Mesh(padGeo, padMat);
-  pads.position.set(0, H*0.02, 0);
+  pads.position.set(0, H*0.025, 0);
   pads.castShadow = true;
   bones[BONE.CHEST].add(pads);
-
-  // Pad edge
+  // Shoulder caps — separate raised plates on each side
+  for (const side of [-1, 1]) {
+    const capGeo = new THREE.BoxGeometry(0.22, 0.08, 0.28*W);
+    const cap = new THREE.Mesh(capGeo, padMat);
+    cap.position.set(side * 0.38 * W * 1.3, H*0.04, 0);
+    cap.rotation.z = side * 0.15; // Angle outward
+    bones[BONE.CHEST].add(cap);
+  }
+  // Pad edge trim
   const padEdge = new THREE.Mesh(
-    new THREE.BoxGeometry(0.38*W*2.9, 0.03, 0.38*W*2.1),
-    new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.3, metalness: 0.4 })
+    new THREE.BoxGeometry(0.44*W*2.9, 0.025, 0.38*W*2.1),
+    new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.3, metalness: 0.5 })
   );
-  padEdge.position.set(0, H*0.03, 0);
+  padEdge.position.set(0, H*0.035, 0);
   bones[BONE.CHEST].add(padEdge);
 
   // Feet/cleats — attached to foot bones
@@ -1090,7 +1101,7 @@ function createPlayer(config) {
   const helmMat = new THREE.MeshStandardMaterial({ color: hColor, roughness: 0.25, metalness: 0.3 });
   const helmet = new THREE.Mesh(new THREE.SphereGeometry(helmR, 12, 10), helmMat);
   helmet.position.set(0, H*0.06, 0);
-  helmet.scale.set(1, 1.05, 1.05);
+  helmet.scale.set(1.05, 1.0, 1.12); // Flattened sphere — wider front-to-back, football helmet shape
   helmet.castShadow = true;
   bones[BONE.HEAD].add(helmet);
 
@@ -1103,19 +1114,29 @@ function createPlayer(config) {
   stripe.position.set(0, H*0.08, 0);
   bones[BONE.HEAD].add(stripe);
 
-  // Facemask
+  // Facemask — proper grid pattern with horizontal and vertical bars
   const fmMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.3, metalness: 0.6 });
-  for (let i = 0; i < 3; i++) {
-    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.010, 0.010, 0.20, 4), fmMat);
+  // Horizontal bars
+  for (let i = 0; i < 4; i++) {
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.24, 4), fmMat);
     bar.rotation.z = Math.PI / 2;
-    bar.position.set(0, H*0.02 + i*0.035, helmR*0.88);
+    bar.position.set(0, H*0.015 + i*0.030, helmR*0.90);
     bones[BONE.HEAD].add(bar);
   }
-  for (let i = -1; i <= 1; i++) {
-    const vbar = new THREE.Mesh(new THREE.CylinderGeometry(0.010, 0.010, 0.10, 4), fmMat);
-    vbar.position.set(i*0.055, H*0.04, helmR*0.88);
+  // Vertical bars — 4 for proper grid
+  for (let i = -1.5; i <= 1.5; i++) {
+    const vbar = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.12, 4), fmMat);
+    vbar.position.set(i*0.045, H*0.045, helmR*0.90);
     bones[BONE.HEAD].add(vbar);
   }
+  // Chin guard — curved bar at bottom
+  const chinBar = new THREE.Mesh(
+    new THREE.TorusGeometry(0.08, 0.012, 4, 8, Math.PI),
+    fmMat
+  );
+  chinBar.position.set(0, H*0.005, helmR*0.85);
+  chinBar.rotation.x = Math.PI * 0.5;
+  bones[BONE.HEAD].add(chinBar);
 
   // Visor
   if (hasVisor) {
@@ -1252,23 +1273,30 @@ function animatePlayerRun(player, dt, speed) {
   const b = data.bones;
   if (!b) return;
 
-  const swing = Math.sin(data.runPhase) * 0.5 * speed;
-  const armSwing = Math.sin(data.runPhase) * 0.35 * speed;
+  const p = data.runPhase;
+  // Sine-based smooth leg cycle with proper knee bend
+  const legSwing = Math.sin(p) * 0.55 * speed;
+  const kneeR = Math.max(0, Math.sin(p + 0.6)) * 0.5 * speed;
+  const kneeL = Math.max(0, Math.sin(p + 0.6 + Math.PI)) * 0.5 * speed;
 
-  // Legs
-  b[BONE.R_THIGH].rotation.x = swing;
-  b[BONE.L_THIGH].rotation.x = -swing;
-  b[BONE.R_SHIN].rotation.x = Math.max(0, Math.sin(data.runPhase + 0.5)) * 0.4 * speed;
-  b[BONE.L_SHIN].rotation.x = Math.max(0, Math.sin(data.runPhase + 0.5 + Math.PI)) * 0.4 * speed;
+  // Legs — opposite arm/leg pattern
+  b[BONE.R_THIGH].rotation.x = legSwing;
+  b[BONE.L_THIGH].rotation.x = -legSwing;
+  b[BONE.R_SHIN].rotation.x = kneeR;
+  b[BONE.L_SHIN].rotation.x = kneeL;
 
-  // Arms
+  // Arms pump opposite to legs
+  const armSwing = Math.sin(p) * 0.4 * speed;
   b[BONE.R_UPPER_ARM].rotation.x = -armSwing;
   b[BONE.L_UPPER_ARM].rotation.x = armSwing;
-  b[BONE.R_FOREARM].rotation.x = -Math.abs(armSwing) * 0.5;
-  b[BONE.L_FOREARM].rotation.x = -Math.abs(armSwing) * 0.5;
+  b[BONE.R_FOREARM].rotation.x = -0.35 - Math.abs(armSwing) * 0.3;
+  b[BONE.L_FOREARM].rotation.x = -0.35 - Math.abs(armSwing) * 0.3;
 
-  // Spine bob
-  b[BONE.SPINE].rotation.x = Math.sin(data.runPhase * 2) * 0.03 * speed;
+  // Torso slight rotation for natural run
+  b[BONE.SPINE].rotation.y = Math.sin(p) * 0.06 * speed;
+  b[BONE.SPINE].rotation.x = Math.sin(p * 2) * 0.025 * speed;
+  // Head stays stable
+  b[BONE.HEAD].rotation.y = -Math.sin(p) * 0.03 * speed;
 }
 
 function animatePlayerSprint(player, dt, speed) {
@@ -1278,20 +1306,26 @@ function animatePlayerSprint(player, dt, speed) {
   const b = data.bones;
   if (!b) return;
 
-  const swing = Math.sin(data.runPhase) * 0.65;
-  const armSwing = Math.sin(data.runPhase) * 0.5;
+  const p = data.runPhase;
+  // Exaggerated sprint — longer strides, faster arm pump
+  const legSwing = Math.sin(p) * 0.72;
+  const kneeR = Math.max(0, Math.sin(p + 0.7)) * 0.65;
+  const kneeL = Math.max(0, Math.sin(p + 0.7 + Math.PI)) * 0.65;
+  const armSwing = Math.sin(p) * 0.55;
 
-  b[BONE.R_THIGH].rotation.x = swing;
-  b[BONE.L_THIGH].rotation.x = -swing;
-  b[BONE.R_SHIN].rotation.x = Math.max(0, Math.sin(data.runPhase + 0.6)) * 0.55;
-  b[BONE.L_SHIN].rotation.x = Math.max(0, Math.sin(data.runPhase + 0.6 + Math.PI)) * 0.55;
+  b[BONE.R_THIGH].rotation.x = legSwing;
+  b[BONE.L_THIGH].rotation.x = -legSwing;
+  b[BONE.R_SHIN].rotation.x = kneeR;
+  b[BONE.L_SHIN].rotation.x = kneeL;
   b[BONE.R_UPPER_ARM].rotation.x = -armSwing;
   b[BONE.L_UPPER_ARM].rotation.x = armSwing;
-  b[BONE.R_FOREARM].rotation.x = -0.6;
-  b[BONE.L_FOREARM].rotation.x = -0.6;
-  // Forward lean
-  b[BONE.SPINE].rotation.x = 0.15;
-  b[BONE.HIPS].rotation.x = 0.05;
+  b[BONE.R_FOREARM].rotation.x = -0.7;
+  b[BONE.L_FOREARM].rotation.x = -0.7;
+  // Forward lean — more exaggerated
+  b[BONE.SPINE].rotation.x = 0.18;
+  b[BONE.SPINE].rotation.y = Math.sin(p) * 0.08;
+  b[BONE.HIPS].rotation.x = 0.08;
+  b[BONE.HEAD].rotation.x = -0.05; // Head stays level
 }
 
 function animatePlayerIdle(player, time) {
@@ -1299,60 +1333,87 @@ function animatePlayerIdle(player, time) {
   const b = player.userData.bones;
   if (!b) return;
 
-  // Subtle breathing sway
-  b[BONE.SPINE].rotation.x = Math.sin(time * 1.5 + bob) * 0.015;
-  b[BONE.SPINE].rotation.z = Math.sin(time * 0.8 + bob) * 0.01;
+  // Natural athletic stance — weight shifting side to side
+  const breathe = Math.sin(time * 1.4 + bob);
+  const sway = Math.sin(time * 0.7 + bob);
+  b[BONE.SPINE].rotation.x = breathe * 0.018;
+  b[BONE.SPINE].rotation.z = sway * 0.015;
 
-  // Weight shift
-  b[BONE.R_THIGH].rotation.x = Math.sin(time * 1.5 + bob) * 0.02;
-  b[BONE.L_THIGH].rotation.x = Math.sin(time * 1.5 + bob + Math.PI) * 0.02;
-  b[BONE.R_SHIN].rotation.x = 0;
-  b[BONE.L_SHIN].rotation.x = 0;
+  // Weight shift — slight knee bend, athletic ready position
+  b[BONE.R_THIGH].rotation.x = -0.05 + Math.sin(time * 1.3 + bob) * 0.025;
+  b[BONE.L_THIGH].rotation.x = -0.05 + Math.sin(time * 1.3 + bob + Math.PI) * 0.025;
+  b[BONE.R_SHIN].rotation.x = 0.08;
+  b[BONE.L_SHIN].rotation.x = 0.08;
+  b[BONE.HIPS].rotation.z = sway * 0.012;
 
-  // Arms relaxed sway
-  b[BONE.R_UPPER_ARM].rotation.x = Math.sin(time * 1.2 + bob) * 0.03;
-  b[BONE.R_UPPER_ARM].rotation.z = 0.08;
-  b[BONE.L_UPPER_ARM].rotation.x = Math.sin(time * 1.2 + bob + 1) * 0.03;
-  b[BONE.L_UPPER_ARM].rotation.z = -0.08;
-  b[BONE.R_FOREARM].rotation.x = -0.05;
-  b[BONE.L_FOREARM].rotation.x = -0.05;
+  // Arms slightly bent and ready, natural sway
+  b[BONE.R_UPPER_ARM].rotation.x = -0.12 + Math.sin(time * 1.1 + bob) * 0.04;
+  b[BONE.R_UPPER_ARM].rotation.z = 0.12;
+  b[BONE.L_UPPER_ARM].rotation.x = -0.12 + Math.sin(time * 1.1 + bob + 1) * 0.04;
+  b[BONE.L_UPPER_ARM].rotation.z = -0.12;
+  b[BONE.R_FOREARM].rotation.x = -0.15;
+  b[BONE.L_FOREARM].rotation.x = -0.15;
 
-  // Head subtle movement
-  b[BONE.HEAD].rotation.y = Math.sin(time * 0.7 + bob) * 0.03;
+  // Head looks around subtly
+  b[BONE.HEAD].rotation.y = Math.sin(time * 0.6 + bob) * 0.05;
+  b[BONE.HEAD].rotation.x = Math.sin(time * 0.9 + bob + 0.5) * 0.02;
 }
 
 function animatePlayerThrow(player, progress) {
   const b = player.userData.bones;
   if (!b) return;
 
-  if (progress < 0.4) {
-    // Wind up — pull right arm back, step with left leg
-    const t = progress / 0.4;
-    b[BONE.R_UPPER_ARM].rotation.x = -1.3 * t;
-    b[BONE.R_UPPER_ARM].rotation.z = 0.4 * t;
-    b[BONE.R_FOREARM].rotation.x = -0.8 * t;
-    b[BONE.L_UPPER_ARM].rotation.x = -0.3 * t;
-    b[BONE.L_UPPER_ARM].rotation.z = -0.2 * t;
-    b[BONE.SPINE].rotation.y = 0.3 * t; // Rotate torso back
-    b[BONE.L_THIGH].rotation.x = 0.2 * t;
+  // Sine-based easing for all phases
+  const sineEase = (t) => 0.5 - 0.5 * Math.cos(t * Math.PI);
+
+  if (progress < 0.3) {
+    // Phase 1: Wind-up — ball hand back behind ear, front arm points at target, torso rotates back
+    const t = sineEase(progress / 0.3);
+    b[BONE.R_UPPER_ARM].rotation.x = -1.4 * t;           // Throwing arm back behind ear
+    b[BONE.R_UPPER_ARM].rotation.z = 0.5 * t;
+    b[BONE.R_FOREARM].rotation.x = -1.0 * t;              // Forearm cocked back
+    b[BONE.L_UPPER_ARM].rotation.x = -0.6 * t;           // Front arm points at target
+    b[BONE.L_UPPER_ARM].rotation.z = -0.15 * t;
+    b[BONE.L_FOREARM].rotation.x = -0.2 * t;
+    b[BONE.SPINE].rotation.y = 0.4 * t;                   // Torso rotates back
+    b[BONE.CHEST] && (b[BONE.CHEST].rotation.y = 0.15 * t);
+    b[BONE.HIPS].rotation.y = 0.15 * t;                   // Slight hip load
+    b[BONE.L_THIGH].rotation.x = 0.15 * t;               // Front foot starts stepping
+  } else if (progress < 0.5) {
+    // Phase 2: Step forward + hip rotation leads
+    const t = sineEase((progress - 0.3) / 0.2);
+    b[BONE.R_UPPER_ARM].rotation.x = -1.4;
+    b[BONE.R_UPPER_ARM].rotation.z = 0.5;
+    b[BONE.R_FOREARM].rotation.x = -1.0;
+    b[BONE.L_UPPER_ARM].rotation.x = -0.6 + 0.3 * t;     // Front arm comes down
+    b[BONE.L_UPPER_ARM].rotation.z = -0.15;
+    b[BONE.SPINE].rotation.y = 0.4 - 0.5 * t;            // Hip rotation leads torso
+    b[BONE.HIPS].rotation.y = 0.15 - 0.35 * t;           // Hips snap forward
+    b[BONE.L_THIGH].rotation.x = 0.15 + 0.15 * t;       // Step forward
+    b[BONE.R_THIGH].rotation.x = -0.1 * t;               // Back leg drives
   } else if (progress < 0.7) {
-    // Release — throw forward, snap torso
-    const t = (progress - 0.4) / 0.3;
+    // Phase 3: Arm whips forward — release point, wrist snap
+    const t = sineEase((progress - 0.5) / 0.2);
     const e = easeOutCubic(t);
-    b[BONE.R_UPPER_ARM].rotation.x = -1.3 + 2.8 * e;
-    b[BONE.R_UPPER_ARM].rotation.z = 0.4 - 0.6 * e;
-    b[BONE.R_FOREARM].rotation.x = -0.8 + 1.2 * e;
-    b[BONE.L_UPPER_ARM].rotation.x = -0.3 + 0.3 * t;
-    b[BONE.SPINE].rotation.y = 0.3 - 0.6 * e; // Snap forward
-    b[BONE.L_THIGH].rotation.x = 0.2 - 0.2 * t;
+    b[BONE.R_UPPER_ARM].rotation.x = -1.4 + 3.0 * e;     // Arm whips over the top
+    b[BONE.R_UPPER_ARM].rotation.z = 0.5 - 0.7 * e;
+    b[BONE.R_FOREARM].rotation.x = -1.0 + 1.5 * e;       // Wrist snap at release
+    b[BONE.L_UPPER_ARM].rotation.x = -0.3;
+    b[BONE.L_UPPER_ARM].rotation.z = -0.15 + 0.15 * t;
+    b[BONE.SPINE].rotation.y = -0.1 - 0.2 * e;           // Torso follows through
+    b[BONE.HIPS].rotation.y = -0.2;
+    b[BONE.L_THIGH].rotation.x = 0.3 - 0.1 * t;
   } else {
-    // Follow through
-    const t = (progress - 0.7) / 0.3;
-    b[BONE.R_UPPER_ARM].rotation.x = 1.5 - 1.5 * t;
-    b[BONE.R_UPPER_ARM].rotation.z = -0.2 * (1 - t);
-    b[BONE.R_FOREARM].rotation.x = 0.4 * (1 - t);
-    b[BONE.L_UPPER_ARM].rotation.x = 0;
+    // Phase 4: Follow-through — arm continues down across body
+    const t = sineEase((progress - 0.7) / 0.3);
+    b[BONE.R_UPPER_ARM].rotation.x = 1.6 - 1.6 * t;
+    b[BONE.R_UPPER_ARM].rotation.z = -0.2 + 0.3 * t;     // Arm crosses body
+    b[BONE.R_FOREARM].rotation.x = 0.5 - 0.5 * t;
+    b[BONE.L_UPPER_ARM].rotation.x = -0.3 * (1 - t);
     b[BONE.SPINE].rotation.y = -0.3 * (1 - t);
+    b[BONE.HIPS].rotation.y = -0.2 * (1 - t);
+    b[BONE.L_THIGH].rotation.x = 0.2 * (1 - t);
+    b[BONE.R_THIGH].rotation.x = -0.1 * (1 - t);
   }
 }
 
@@ -1360,26 +1421,30 @@ function animatePlayerCatch(player, progress) {
   const b = player.userData.bones;
   if (!b) return;
 
-  if (progress < 0.5) {
-    // Arms extend to catch
-    const t = easeOutCubic(progress / 0.5);
-    b[BONE.R_UPPER_ARM].rotation.x = -1.2 * t;
-    b[BONE.R_UPPER_ARM].rotation.z = 0.35 * t;
-    b[BONE.R_FOREARM].rotation.x = -0.3 * t;
-    b[BONE.L_UPPER_ARM].rotation.x = -1.2 * t;
-    b[BONE.L_UPPER_ARM].rotation.z = -0.35 * t;
-    b[BONE.L_FOREARM].rotation.x = -0.3 * t;
-    b[BONE.SPINE].rotation.x = -0.1 * t; // Lean back slightly
+  const sineEase = (t) => 0.5 - 0.5 * Math.cos(Math.min(1, t) * Math.PI);
+
+  if (progress < 0.45) {
+    // Arms extend toward ball — reach out
+    const t = sineEase(progress / 0.45);
+    b[BONE.R_UPPER_ARM].rotation.x = -1.4 * t;
+    b[BONE.R_UPPER_ARM].rotation.z = 0.3 * t;
+    b[BONE.R_FOREARM].rotation.x = -0.15 * t;
+    b[BONE.L_UPPER_ARM].rotation.x = -1.4 * t;
+    b[BONE.L_UPPER_ARM].rotation.z = -0.3 * t;
+    b[BONE.L_FOREARM].rotation.x = -0.15 * t;
+    b[BONE.SPINE].rotation.x = -0.12 * t;
+    b[BONE.HEAD].rotation.x = -0.1 * t; // Eyes on ball
   } else {
-    // Secure ball — arms tuck in
-    const t = (progress - 0.5) / 0.5;
-    b[BONE.R_UPPER_ARM].rotation.x = -1.2 + 0.9 * t;
-    b[BONE.R_UPPER_ARM].rotation.z = 0.35 - 0.35 * t;
-    b[BONE.R_FOREARM].rotation.x = -0.3 - 0.4 * t;
-    b[BONE.L_UPPER_ARM].rotation.x = -1.2 + 0.9 * t;
-    b[BONE.L_UPPER_ARM].rotation.z = -0.35 + 0.35 * t;
-    b[BONE.L_FOREARM].rotation.x = -0.3 - 0.4 * t;
-    b[BONE.SPINE].rotation.x = -0.1 + 0.1 * t;
+    // Secure ball — tuck to body
+    const t = sineEase((progress - 0.45) / 0.55);
+    b[BONE.R_UPPER_ARM].rotation.x = -1.4 + 1.1 * t;
+    b[BONE.R_UPPER_ARM].rotation.z = 0.3 - 0.3 * t;
+    b[BONE.R_FOREARM].rotation.x = -0.15 - 0.6 * t;
+    b[BONE.L_UPPER_ARM].rotation.x = -1.4 + 1.1 * t;
+    b[BONE.L_UPPER_ARM].rotation.z = -0.3 + 0.3 * t;
+    b[BONE.L_FOREARM].rotation.x = -0.15 - 0.6 * t;
+    b[BONE.SPINE].rotation.x = -0.12 + 0.12 * t;
+    b[BONE.HEAD].rotation.x = -0.1 * (1 - t);
   }
 }
 
@@ -1405,51 +1470,92 @@ function animatePlayerRush(player, dt) {
   data.runPhase += dt * 10;
   const b = data.bones;
   if (!b) return;
-  // Charging forward with arms up
-  const swing = Math.sin(data.runPhase) * 0.55;
-  b[BONE.R_THIGH].rotation.x = swing;
-  b[BONE.L_THIGH].rotation.x = -swing;
-  b[BONE.R_SHIN].rotation.x = Math.max(0, Math.sin(data.runPhase + 0.5)) * 0.45;
-  b[BONE.L_SHIN].rotation.x = Math.max(0, Math.sin(data.runPhase + 0.5 + Math.PI)) * 0.45;
-  b[BONE.R_UPPER_ARM].rotation.x = -0.8 + Math.sin(data.runPhase * 0.5) * 0.2;
-  b[BONE.R_UPPER_ARM].rotation.z = 0.5;
-  b[BONE.L_UPPER_ARM].rotation.x = -0.8 + Math.sin(data.runPhase * 0.5 + 1) * 0.2;
-  b[BONE.L_UPPER_ARM].rotation.z = -0.5;
-  b[BONE.SPINE].rotation.x = 0.2;
+  const p = data.runPhase;
+  // Bull rush — low center of gravity, arms forward pushing, explosive steps
+  const legSwing = Math.sin(p) * 0.6;
+  b[BONE.R_THIGH].rotation.x = legSwing;
+  b[BONE.L_THIGH].rotation.x = -legSwing;
+  b[BONE.R_SHIN].rotation.x = Math.max(0, Math.sin(p + 0.5)) * 0.5;
+  b[BONE.L_SHIN].rotation.x = Math.max(0, Math.sin(p + 0.5 + Math.PI)) * 0.5;
+  // Arms forward in pushing position
+  b[BONE.R_UPPER_ARM].rotation.x = -0.9 + Math.sin(p * 0.8) * 0.15;
+  b[BONE.R_UPPER_ARM].rotation.z = 0.55;
+  b[BONE.R_FOREARM].rotation.x = -0.4;
+  b[BONE.L_UPPER_ARM].rotation.x = -0.9 + Math.sin(p * 0.8 + 1) * 0.15;
+  b[BONE.L_UPPER_ARM].rotation.z = -0.55;
+  b[BONE.L_FOREARM].rotation.x = -0.4;
+  // Low center of gravity — forward lean
+  b[BONE.SPINE].rotation.x = 0.28;
+  b[BONE.HIPS].rotation.x = 0.1;
+  b[BONE.HEAD].rotation.x = -0.15; // Head up, eyes on target
 }
 
 function animatePlayerCelebrate(player, time) {
   const b = player.userData.bones;
   if (!b) return;
-  const phase = time * 5;
-  // Arms up celebration
-  b[BONE.R_UPPER_ARM].rotation.x = -2.5 + Math.sin(phase * 2) * 0.3;
-  b[BONE.R_UPPER_ARM].rotation.z = 0.4;
-  b[BONE.R_FOREARM].rotation.x = Math.sin(phase * 3) * 0.3;
-  b[BONE.L_UPPER_ARM].rotation.x = -2.5 + Math.sin(phase * 2 + 1) * 0.3;
-  b[BONE.L_UPPER_ARM].rotation.z = -0.4;
-  b[BONE.L_FOREARM].rotation.x = Math.sin(phase * 3 + 1) * 0.3;
-  // Jump
-  b[BONE.L_THIGH].rotation.x = Math.sin(phase) * 0.15;
-  b[BONE.R_THIGH].rotation.x = Math.sin(phase + Math.PI) * 0.15;
-  b[BONE.HEAD].rotation.y = Math.sin(phase * 0.5) * 0.2;
+  const phase = time * 4;
+  // Both arms raised high with fist pump
+  b[BONE.R_UPPER_ARM].rotation.x = -2.8 + Math.sin(phase * 3) * 0.25;
+  b[BONE.R_UPPER_ARM].rotation.z = 0.35;
+  b[BONE.R_FOREARM].rotation.x = -0.3 + Math.sin(phase * 4) * 0.4;  // Fist pump
+  b[BONE.L_UPPER_ARM].rotation.x = -2.8 + Math.sin(phase * 3 + 1.2) * 0.25;
+  b[BONE.L_UPPER_ARM].rotation.z = -0.35;
+  b[BONE.L_FOREARM].rotation.x = -0.3 + Math.sin(phase * 4 + 1.2) * 0.4;
+  // Jump — knees tuck on upswing
+  const jumpCycle = Math.sin(phase * 1.5);
+  b[BONE.L_THIGH].rotation.x = jumpCycle > 0 ? -0.3 * jumpCycle : 0;
+  b[BONE.R_THIGH].rotation.x = jumpCycle > 0 ? -0.3 * jumpCycle : 0;
+  b[BONE.L_SHIN].rotation.x = jumpCycle > 0 ? 0.4 * jumpCycle : 0;
+  b[BONE.R_SHIN].rotation.x = jumpCycle > 0 ? 0.4 * jumpCycle : 0;
+  // Head looks up and around
+  b[BONE.HEAD].rotation.y = Math.sin(phase * 0.7) * 0.25;
+  b[BONE.HEAD].rotation.x = -0.15;
+  b[BONE.SPINE].rotation.y = Math.sin(phase * 0.5) * 0.1;
 }
 
 function animatePlayerFall(player, progress) {
   const b = player.userData.bones;
   if (!b) return;
-  const t = easeOutCubic(Math.min(1, progress));
-  // Fall backward
-  b[BONE.HIPS].rotation.x = -0.8 * t;
-  b[BONE.SPINE].rotation.x = -0.4 * t;
-  b[BONE.R_UPPER_ARM].rotation.x = -1.0 * t;
-  b[BONE.R_UPPER_ARM].rotation.z = 0.5 * t;
-  b[BONE.L_UPPER_ARM].rotation.x = -0.8 * t;
-  b[BONE.L_UPPER_ARM].rotation.z = -0.5 * t;
-  b[BONE.R_THIGH].rotation.x = -0.3 * t;
-  b[BONE.L_THIGH].rotation.x = 0.2 * t;
-  b[BONE.R_SHIN].rotation.x = 0.5 * t;
-  b[BONE.L_SHIN].rotation.x = 0.3 * t;
+  // Sine-based easing for realistic crumple
+  const sineEase = (t) => 0.5 - 0.5 * Math.cos(Math.min(1, t) * Math.PI);
+
+  if (progress < 0.4) {
+    // Phase 1: Knees buckle first
+    const t = sineEase(progress / 0.4);
+    b[BONE.R_SHIN].rotation.x = 0.7 * t;
+    b[BONE.L_SHIN].rotation.x = 0.5 * t;
+    b[BONE.R_THIGH].rotation.x = -0.2 * t;
+    b[BONE.L_THIGH].rotation.x = 0.1 * t;
+    b[BONE.SPINE].rotation.x = -0.15 * t;
+    b[BONE.HIPS].rotation.x = -0.2 * t;
+  } else if (progress < 0.7) {
+    // Phase 2: Torso folds forward
+    const t = sineEase((progress - 0.4) / 0.3);
+    b[BONE.R_SHIN].rotation.x = 0.7;
+    b[BONE.L_SHIN].rotation.x = 0.5;
+    b[BONE.R_THIGH].rotation.x = -0.2 - 0.3 * t;
+    b[BONE.L_THIGH].rotation.x = 0.1 + 0.2 * t;
+    b[BONE.SPINE].rotation.x = -0.15 - 0.5 * t;
+    b[BONE.HIPS].rotation.x = -0.2 - 0.6 * t;
+    b[BONE.R_UPPER_ARM].rotation.x = -0.8 * t;
+    b[BONE.R_UPPER_ARM].rotation.z = 0.5 * t;
+    b[BONE.L_UPPER_ARM].rotation.x = -0.6 * t;
+    b[BONE.L_UPPER_ARM].rotation.z = -0.4 * t;
+    b[BONE.HEAD].rotation.x = -0.3 * t;
+  } else {
+    // Phase 3: Hits ground — full collapse
+    const t = sineEase((progress - 0.7) / 0.3);
+    b[BONE.HIPS].rotation.x = -0.8 - 0.3 * t;
+    b[BONE.SPINE].rotation.x = -0.65 - 0.2 * t;
+    b[BONE.R_UPPER_ARM].rotation.x = -0.8 - 0.4 * t;
+    b[BONE.R_UPPER_ARM].rotation.z = 0.5 + 0.3 * t;
+    b[BONE.L_UPPER_ARM].rotation.x = -0.6 - 0.5 * t;
+    b[BONE.L_UPPER_ARM].rotation.z = -0.4 - 0.3 * t;
+    b[BONE.R_SHIN].rotation.x = 0.7 + 0.2 * t;
+    b[BONE.L_SHIN].rotation.x = 0.5 + 0.3 * t;
+    b[BONE.HEAD].rotation.x = -0.3 - 0.2 * t;
+    b[BONE.HIPS].rotation.z = 0.3 * t; // Twist as hits ground
+  }
 }
 
 function resetPlayerBones(player) {
@@ -1817,9 +1923,9 @@ const game = {
 let qb = { accuracy: 70, arm: 60, readSpeed: 0, level: 1 };
 let wrs = [
   { id: 0, name: 'ACE', spd: 60, cat: 65, rte: 60, lvl: 1, num: 81 },
-  { id: 1, name: 'BLITZ', spd: 55, cat: 60, rte: 65, lvl: 1, num: 88 },
+  { id: 1, name: 'BLITZ', spd: 55, cat: 60, rte: 65, lvl: 1, num: 84 },
   { id: 2, name: 'FLASH', spd: 65, cat: 55, rte: 55, lvl: 1, num: 13 },
-  { id: 3, name: 'TANK', spd: 50, cat: 70, rte: 60, lvl: 1, num: 84 },
+  { id: 3, name: 'TANK', spd: 50, cat: 70, rte: 60, lvl: 1, num: 89 },
 ];
 let relics = [];
 const MAX_RELICS = 8;
@@ -2221,48 +2327,48 @@ const offenseFormations = [
 
 const defenseFormations = [
   { name: 'Cover 1', coverType: 'man', getPositions: (losY) => ({
-    rusher: { yard: losY - 7, lane: 30, fast: false },
+    rusher: { yard: losY + 7, lane: 30, fast: false },
+    dbs: [
+      { yard: losY + 6, lane: 10, role: 'man', coverIdx: 0 },
+      { yard: losY + 6, lane: 22, role: 'man', coverIdx: 1 },
+      { yard: losY + 6, lane: 38, role: 'man', coverIdx: 2 },
+      { yard: losY + 12, lane: 50, role: 'free', coverIdx: -1 },
+    ]
+  })},
+  { name: 'Cover 2 Zone', coverType: 'zone', getPositions: (losY) => ({
+    rusher: { yard: losY + 7, lane: 30, fast: false },
+    dbs: [
+      { yard: losY + 14, lane: 15, role: 'deep', coverIdx: -1 },
+      { yard: losY + 14, lane: 45, role: 'deep', coverIdx: -1 },
+      { yard: losY + 7, lane: 18, role: 'flat', coverIdx: -1 },
+      { yard: losY + 7, lane: 42, role: 'flat', coverIdx: -1 },
+    ]
+  })},
+  { name: 'Cover 3 Zone', coverType: 'zone', getPositions: (losY) => ({
+    rusher: { yard: losY + 7, lane: 30, fast: false },
+    dbs: [
+      { yard: losY + 15, lane: 12, role: 'deep', coverIdx: -1 },
+      { yard: losY + 15, lane: 30, role: 'deep', coverIdx: -1 },
+      { yard: losY + 15, lane: 48, role: 'deep', coverIdx: -1 },
+      { yard: losY + 7, lane: 30, role: 'flat', coverIdx: -1 },
+    ]
+  })},
+  { name: 'Cover 4', coverType: 'zone', getPositions: (losY) => ({
+    rusher: { yard: losY + 7, lane: 30, fast: false },
+    dbs: [
+      { yard: losY + 12, lane: 10, role: 'deep', coverIdx: -1 },
+      { yard: losY + 12, lane: 24, role: 'deep', coverIdx: -1 },
+      { yard: losY + 12, lane: 38, role: 'deep', coverIdx: -1 },
+      { yard: losY + 12, lane: 52, role: 'deep', coverIdx: -1 },
+    ]
+  })},
+  { name: 'Man Blitz', coverType: 'blitz', getPositions: (losY) => ({
+    rusher: { yard: losY + 7, lane: 30, fast: true },
     dbs: [
       { yard: losY + 5, lane: 10, role: 'man', coverIdx: 0 },
       { yard: losY + 5, lane: 22, role: 'man', coverIdx: 1 },
       { yard: losY + 5, lane: 38, role: 'man', coverIdx: 2 },
-      { yard: losY + 8, lane: 50, role: 'free', coverIdx: -1 },
-    ]
-  })},
-  { name: 'Cover 2 Zone', coverType: 'zone', getPositions: (losY) => ({
-    rusher: { yard: losY - 7, lane: 30, fast: false },
-    dbs: [
-      { yard: losY + 12, lane: 15, role: 'deep', coverIdx: -1 },
-      { yard: losY + 12, lane: 45, role: 'deep', coverIdx: -1 },
-      { yard: losY + 4, lane: 18, role: 'flat', coverIdx: -1 },
-      { yard: losY + 4, lane: 42, role: 'flat', coverIdx: -1 },
-    ]
-  })},
-  { name: 'Cover 3 Zone', coverType: 'zone', getPositions: (losY) => ({
-    rusher: { yard: losY - 7, lane: 30, fast: false },
-    dbs: [
-      { yard: losY + 14, lane: 12, role: 'deep', coverIdx: -1 },
-      { yard: losY + 15, lane: 30, role: 'deep', coverIdx: -1 },
-      { yard: losY + 14, lane: 48, role: 'deep', coverIdx: -1 },
-      { yard: losY + 4, lane: 30, role: 'flat', coverIdx: -1 },
-    ]
-  })},
-  { name: 'Cover 4', coverType: 'zone', getPositions: (losY) => ({
-    rusher: { yard: losY - 7, lane: 30, fast: false },
-    dbs: [
-      { yard: losY + 11, lane: 10, role: 'deep', coverIdx: -1 },
-      { yard: losY + 11, lane: 24, role: 'deep', coverIdx: -1 },
-      { yard: losY + 11, lane: 38, role: 'deep', coverIdx: -1 },
-      { yard: losY + 11, lane: 52, role: 'deep', coverIdx: -1 },
-    ]
-  })},
-  { name: 'Man Blitz', coverType: 'blitz', getPositions: (losY) => ({
-    rusher: { yard: losY - 7, lane: 30, fast: true },
-    dbs: [
-      { yard: losY + 3, lane: 10, role: 'man', coverIdx: 0 },
-      { yard: losY + 3, lane: 22, role: 'man', coverIdx: 1 },
-      { yard: losY + 3, lane: 38, role: 'man', coverIdx: 2 },
-      { yard: losY + 3, lane: 50, role: 'man', coverIdx: 3 },
+      { yard: losY + 5, lane: 50, role: 'man', coverIdx: 3 },
     ]
   })},
 ];
@@ -2648,17 +2754,17 @@ function initScene() {
   scene.add(playerObjects.qb);
 
   playerObjects.center = createPlayer({
-    color: 0x1e3a5f, number: 52, heightScale: 0.9, widthScale: 1.2,
+    color: 0x1e3a5f, number: 52, heightScale: 0.88, widthScale: 1.35,
     helmetColor: 0xf0f0f0,
   });
   scene.add(playerObjects.center);
 
-  // WRs with distinct visual identity
+  // WRs with distinct visual identity — each has unique traits
   const wrConfigs = [
-    { color: 0xffffff, number: 81, hasVisor: true, visorColor: 0x4488ff, accentColor: 0x4488ff }, // ACE - blue visor
-    { color: 0xffffff, number: 88, hasGloves: true, gloveColor: 0xffcc00, accentColor: 0xffcc00 }, // BLITZ - gold gloves
-    { color: 0xffffff, number: 13, heightScale: 1.15, hasHeadband: true, accentColor: 0x44ff88 }, // FLASH - tall, headband
-    { color: 0xffffff, number: 84, widthScale: 1.1, accentColor: 0xff66aa }, // TANK - wider build
+    { color: 0xffffff, number: 81, hasVisor: true, visorColor: 0x4488ff, accentColor: 0x4488ff, helmetColor: 0xf0f0f0 }, // ACE - medium build, blue visor
+    { color: 0xffffff, number: 84, heightScale: 0.92, hasGloves: true, gloveColor: 0xee3333, accentColor: 0xee3333, helmetColor: 0xf0f0f0 }, // BLITZ - shorter/quicker, red arm sleeves
+    { color: 0xffffff, number: 13, heightScale: 1.18, hasHeadband: true, accentColor: 0x44ff88, helmetColor: 0xf0f0f0 }, // FLASH - tallest WR, headband
+    { color: 0xffffff, number: 89, widthScale: 1.1, hasGloves: true, gloveColor: 0xffcc00, accentColor: 0xff66aa, helmetColor: 0xf0f0f0 }, // TANK - wider build
   ];
   for (const cfg of wrConfigs) {
     const wr = createPlayer(cfg);
@@ -2669,12 +2775,12 @@ function initScene() {
   // Defense — red team
   const defNums = [21, 24, 32, 45];
   for (const num of defNums) {
-    const db = createPlayer({ color: 0xcc2222, number: num, helmetColor: 0xcc2222 });
+    const db = createPlayer({ color: 0xcc2222, number: num, helmetColor: 0x1a1a1a });
     playerObjects.dbs.push(db);
     scene.add(db);
   }
 
-  playerObjects.rusher = createPlayer({ color: 0xcc2222, number: 99, widthScale: 1.3, heightScale: 1.05, helmetColor: 0xcc2222 });
+  playerObjects.rusher = createPlayer({ color: 0xcc2222, number: 99, widthScale: 1.45, heightScale: 1.12, helmetColor: 0x1a1a1a });
   scene.add(playerObjects.rusher);
 
   // Football
@@ -2949,11 +3055,11 @@ function updateSimulation(dt) {
         // DOF: blur background, focus on QB
         enableDOF(8);
 
-        // Camera: dramatic close-up on QB
+        // Camera: smooth dramatic close-up on QB (lerp, never snap)
         cameraState.heroZoom = true;
         const qbWorldPos = fieldPos(sim.qbPos.yard, sim.qbPos.lane);
-        cameraState.target.copy(qbWorldPos);
-        cameraState.offset.set(qbWorldPos.x + 6, 5, qbWorldPos.z + 4);
+        cameraState.target.lerp(qbWorldPos, 0.15);
+        cameraState.offset.lerp(new THREE.Vector3(qbWorldPos.x + 8, 6, qbWorldPos.z + 5), 0.12);
 
         // Release burst particles
         addParticles3D(
@@ -3262,24 +3368,30 @@ function updateSimulation(dt) {
 
       // Smooth camera based on phase
       if (sim.phase === 'tdCelebration') {
-        // Orbit around end zone
+        // Smooth orbit around end zone
         const angle = game.time * 0.5;
-        cameraState.target.set(0, 1, yardToZ(50));
-        cameraState.offset.set(Math.sin(angle) * 20, 8, yardToZ(50) + Math.cos(angle) * 20);
-      } else if (sim.phase === 'catch') {
-        // Dramatic side angle zoom toward receiver
-        const wrWorld = fieldPos(sim.ballTarget.yard, sim.ballTarget.lane);
-        cameraState.target.lerp(wrWorld, 0.08);
-        const side = wrWorld.x > 0 ? -1 : 1;
-        cameraState.offset.lerp(new THREE.Vector3(wrWorld.x + side * 10, 4, wrWorld.z + 5), 0.06);
+        const tdTarget = new THREE.Vector3(0, 1, yardToZ(50));
+        const tdOffset = new THREE.Vector3(Math.sin(angle) * 20, 8, yardToZ(50) + Math.cos(angle) * 20);
+        cameraState.target.lerp(tdTarget, 0.04);
+        cameraState.offset.lerp(tdOffset, 0.04);
+      } else if (sim.phase === 'catch' || sim.phase === 'result' || sim.phase === 'sackResult') {
+        // Smooth ease to result view — side angle toward receiver/QB
+        const resultTarget = sim.isSack ? fieldPos(sim.qbPos.yard, sim.qbPos.lane) : fieldPos(sim.ballTarget.yard, sim.ballTarget.lane);
+        cameraState.target.lerp(resultTarget, 0.05);
+        const side = resultTarget.x > 0 ? -1 : 1;
+        cameraState.offset.lerp(new THREE.Vector3(resultTarget.x + side * 12, 5, resultTarget.z + 6), 0.04);
       } else if (sim.phase === 'throw' && sim.throwProgress > 0.3) {
-        // Track ball flight — smooth follow
+        // Smooth follow ball flight with slight lead
         const ballWorld = fieldPos(sim.ballPos.yard, sim.ballPos.lane);
-        cameraState.target.lerp(ballWorld, 0.05);
-        cameraState.offset.lerp(new THREE.Vector3(ballWorld.x + 30, 18, ballWorld.z + 12), 0.04);
+        const targetWorld = fieldPos(sim.ballTarget.yard, sim.ballTarget.lane);
+        // Lead the camera slightly ahead of ball toward target
+        const leadTarget = ballWorld.clone().lerp(targetWorld, 0.3);
+        cameraState.target.lerp(leadTarget, 0.06);
+        cameraState.offset.lerp(new THREE.Vector3(ballWorld.x + 28, 16, ballWorld.z + 14), 0.05);
       } else {
+        // Default broadcast — smooth lerp, never instant
         cameraState.target.lerp(focusWorld, 0.04);
-        cameraState.offset.set(focusWorld.x + 42, 25, focusWorld.z + 18);
+        cameraState.offset.lerp(new THREE.Vector3(focusWorld.x + 42, 25, focusWorld.z + 18), 0.035);
       }
     }
   }
@@ -4080,9 +4192,9 @@ function startNewGame() {
   qb = { accuracy: 70 + legacyBonus, arm: 60, readSpeed: 0, level: 1 };
   wrs = [
     { id: 0, name: 'ACE', spd: 60, cat: 65, rte: 60, lvl: 1, num: 81 },
-    { id: 1, name: 'BLITZ', spd: 55, cat: 60, rte: 65, lvl: 1, num: 88 },
+    { id: 1, name: 'BLITZ', spd: 55, cat: 60, rte: 65, lvl: 1, num: 84 },
     { id: 2, name: 'FLASH', spd: 65, cat: 55, rte: 55, lvl: 1, num: 13 },
-    { id: 3, name: 'TANK', spd: 50, cat: 70, rte: 60, lvl: 1, num: 84 },
+    { id: 3, name: 'TANK', spd: 50, cat: 70, rte: 60, lvl: 1, num: 89 },
   ];
   relics = []; defenseBonus = 0; consecutiveCatches = 0;
   currentPlay = null; sim = null;
@@ -4102,9 +4214,18 @@ function startNewGame() {
 // CAMERA UPDATE
 // ============================================================
 function updateCamera(dt) {
-  const targetPos = cameraState.offset.clone();
-  camera.position.lerp(targetPos, cameraState.lerpSpeed);
-  camera.lookAt(cameraState.target);
+  // Smooth position via eased lerp
+  const lerpFactor = 1 - Math.pow(1 - cameraState.lerpSpeed, dt * 60);
+  camera.position.lerp(cameraState.offset, lerpFactor);
+
+  // Smooth lookAt — never snap, always slerp toward target
+  if (!cameraState._smoothLookAtInit) {
+    cameraState._smoothLookAt.copy(cameraState.target);
+    cameraState._smoothLookAtInit = true;
+  }
+  const lookLerp = 1 - Math.pow(1 - cameraState.lookAtLerpSpeed, dt * 60);
+  cameraState._smoothLookAt.lerp(cameraState.target, lookLerp);
+  camera.lookAt(cameraState._smoothLookAt);
 
   // Screen shake
   if (cameraState.shakeIntensity > 0.01) {
@@ -4147,17 +4268,22 @@ function gameLoop(timestamp) {
 
   // Update camera
   if (game.state === 'reading' || game.state === 'choosing') {
-    // Pre-snap: wide broadcast shot showing entire formation
+    // Pre-snap: wide broadcast angle showing full formation — smooth ease
     const focusZ = currentPlay ? yardToZ(game.ballYardLine + 10) : 0;
-    cameraState.target.lerp(new THREE.Vector3(0, 0, focusZ), 0.03);
-    cameraState.offset.lerp(new THREE.Vector3(50, 30, focusZ + 20), 0.025);
+    cameraState.target.lerp(new THREE.Vector3(0, 1, focusZ), 0.035);
+    cameraState.offset.lerp(new THREE.Vector3(48, 28, focusZ + 22), 0.03);
   } else if ((game.state === 'simulation' || game.state === 'passType') && sim) {
     // Handled inside updateSimulation camera logic
     if (!cameraState.heroZoom && sim.phase === 'snap') {
-      // Quick zoom in during snap
+      // Smooth dolly in during snap — ease into the action
       const focusZ = yardToZ(game.ballYardLine);
-      cameraState.target.lerp(new THREE.Vector3(0, 0, focusZ), 0.05);
-      cameraState.offset.lerp(new THREE.Vector3(38, 22, focusZ + 15), 0.04);
+      cameraState.target.lerp(new THREE.Vector3(0, 1, focusZ), 0.06);
+      cameraState.offset.lerp(new THREE.Vector3(38, 20, focusZ + 16), 0.05);
+    } else if (!cameraState.heroZoom && sim.phase === 'dropback') {
+      // Smooth track QB dropback
+      const qbWorld = fieldPos(sim.qbPos.yard, sim.qbPos.lane);
+      cameraState.target.lerp(qbWorld, 0.05);
+      cameraState.offset.lerp(new THREE.Vector3(qbWorld.x + 40, 22, qbWorld.z + 16), 0.04);
     }
   } else {
     // Menu state - cinematic slow orbit
