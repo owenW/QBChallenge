@@ -1665,7 +1665,50 @@ function beginSimAfterPassType() {
   sim.success = Math.random() * 100 < sim.catchProb;
   const intChance = calculateINTChance(sim.chosenWR, game.passType);
   if (!sim.success && Math.random() * 100 < intChance) sim.isINT = true;
-  if (sim.success) sim.yardsGained = Math.max(1, Math.abs(routeEnd.yard - getLOSYard()) + Math.floor(Math.random() * 5));
+  if (sim.success) {
+    // Base yards = route distance from LOS
+    const routeYards = Math.max(1, Math.abs(routeEnd.yard - getLOSYard()));
+    // YAC (Run After Catch) system - flag football style
+    // Find closest DB to the catch point
+    const catchYard = getLOSYard() + routeYards;
+    const catchLane = routeEnd.lane;
+    let closestDBDist = 999;
+    for (const db of currentPlay.defense.dbs) {
+      const dbEndYard = db.yard + (currentPlay.defense.coverType === 'man' ? routeYards * 0.9 : routeYards * 0.6);
+      const dist = Math.sqrt(Math.pow(dbEndYard - catchYard, 2) + Math.pow(db.lane - catchLane, 2));
+      if (dist < closestDBDist) closestDBDist = dist;
+    }
+    // YAC calculation based on DB proximity and WR speed
+    let yacYards = 0;
+    const wrSpd = wrs[sim.chosenWR].spd;
+    if (closestDBDist > 15) {
+      // Wide open - potential house call (TD run)
+      yacYards = 15 + Math.floor(Math.random() * 20) + Math.floor((wrSpd - 50) * 0.3);
+      sim.yacType = 'wide_open';
+    } else if (closestDBDist > 8) {
+      // Some room to run, decent YAC
+      yacYards = 5 + Math.floor(Math.random() * 12) + Math.floor((wrSpd - 50) * 0.15);
+      sim.yacType = 'room_to_run';
+    } else if (closestDBDist > 4) {
+      // Tight coverage, short YAC before flag pull
+      yacYards = 1 + Math.floor(Math.random() * 5);
+      sim.yacType = 'flag_pull';
+    } else {
+      // Immediate flag pull at catch point
+      yacYards = 0;
+      sim.yacType = 'immediate_flag';
+    }
+    // Short routes = higher catch rate but DB likely closer = less YAC
+    // Deep routes = lower catch rate but if caught, DB often out of position = more YAC potential
+    if (isDeepRoute(currentPlay.offense.wrs[sim.chosenWR].route) && closestDBDist > 10) {
+      yacYards += 5 + Math.floor(Math.random() * 10); // Deep ball + open = house call potential
+    }
+    // Ghost boots relic: +20% route running also helps YAC
+    if (hasRelic('ghost_boots')) yacYards = Math.floor(yacYards * 1.3);
+    sim.yardsGained = routeYards + yacYards;
+    sim.yacYards = yacYards;
+    sim.routeYards = routeYards;
+  }
   game.state = 'simulation';
   const cl = getComposureLevel();
   if (cl === 'nervous') triggerShake(2); else if (cl === 'shaky') triggerShake(4); else if (cl === 'tilted') triggerShake(8);
@@ -1762,7 +1805,7 @@ function updateSimulation(dt) {
           sim.catchProb = calculateCatchProb(sim.chosenWR, game.passType);
           sim.success = Math.random() * 100 < sim.catchProb;
           if (!sim.success) { const ic = calculateINTChance(sim.chosenWR, game.passType); sim.isINT = Math.random() * 100 < ic; }
-          if (sim.success) { const re = getRouteEndpoint(currentPlay.offense.wrs[sim.chosenWR]); sim.yardsGained = Math.max(1, Math.abs(re.yard - getLOSYard()) + Math.floor(Math.random() * 5)); }
+          if (sim.success) { const re = getRouteEndpoint(currentPlay.offense.wrs[sim.chosenWR]); sim.yardsGained = Math.max(1, Math.abs(re.yard - getLOSYard()) + Math.floor(Math.random() * 8)); sim.yacYards = 0; sim.yacType = "scramble"; }
           sim.phase = 'routes'; sim.timer = 0.84; sim.routeProgress = 0.7; sim.scrambleChoice = 'done';
         } else if (sim.scrambleChoice === 'left' || sim.scrambleChoice === 'right') {
           let dodgeSuccess = false;
@@ -1778,7 +1821,7 @@ function updateSimulation(dt) {
             sim.catchProb = calculateCatchProb(sim.chosenWR, game.passType);
             sim.success = Math.random() * 100 < sim.catchProb;
             if (!sim.success) { const ic = calculateINTChance(sim.chosenWR, game.passType); sim.isINT = Math.random() * 100 < ic; }
-            if (sim.success) { const re = getRouteEndpoint(currentPlay.offense.wrs[sim.chosenWR]); sim.yardsGained = Math.max(1, Math.abs(re.yard - getLOSYard()) + Math.floor(Math.random() * 5)); }
+            if (sim.success) { const re = getRouteEndpoint(currentPlay.offense.wrs[sim.chosenWR]); sim.yardsGained = Math.max(1, Math.abs(re.yard - getLOSYard()) + Math.floor(Math.random() * 8)); sim.yacYards = 0; sim.yacType = "scramble"; }
             sim.phase = 'routes'; sim.timer = 0.84; sim.routeProgress = 0.7; sim.scrambleChoice = 'done';
           } else {
             sim.isSack = true; sim.sackYards = 7; sim.phase = 'sackResult'; sim.timer = 0;
@@ -2924,9 +2967,13 @@ function drawSimulationScreen(dt) {
     const tdAlpha = Math.min(1, sim.tdTimer / 0.3);
     ctx.globalAlpha = tdAlpha;
     ctx.fillStyle = COL.parchment; ctx.font = 'bold 36px "Courier New"'; ctx.textAlign = 'center';
-    ctx.fillText('TOUCHDOWN!', W / 2, H / 2 - 25);
+    ctx.fillText('TOUCHDOWN!', W / 2, H / 2 - 30);
     ctx.fillStyle = COL.uiGold; ctx.font = 'bold 16px "Courier New"';
-    ctx.fillText(`+${sim.yardsGained} YDS`, W / 2, H / 2 + 5);
+    ctx.fillText(`+${sim.yardsGained} 码`, W / 2, H / 2 + 0);
+    if (sim.yacYards > 5) {
+      ctx.fillStyle = '#88ddff'; ctx.font = '11px "Courier New"';
+      ctx.fillText(`接球后狂奔${sim.yacYards}码直接达阵！`, W / 2, H / 2 + 20);
+    }
     ctx.restore();
   }
 
@@ -2943,9 +2990,19 @@ function drawSimulationScreen(dt) {
     drawCardFrame(ctx, W / 2 - 120, H / 2 - 50, 240, 100, false);
     if (sim.success) {
       ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 18px "Courier New"'; ctx.textAlign = 'center';
-      ctx.fillText('COMPLETE!', W / 2, H / 2 - 20);
+      ctx.fillText('COMPLETE!', W / 2, H / 2 - 25);
       ctx.fillStyle = COL.uiGold; ctx.font = 'bold 14px "Courier New"';
-      ctx.fillText(`+${sim.yardsGained} YDS`, W / 2, H / 2 + 4);
+      ctx.fillText(`+${sim.yardsGained} 码`, W / 2, H / 2 - 5);
+      if (sim.yacYards > 0) {
+        ctx.fillStyle = '#88ddff'; ctx.font = '10px "Courier New"';
+        const yacMsg = sim.yacType === 'wide_open' ? `接球后狂奔 +${sim.yacYards}码！无人可挡！` :
+                       sim.yacType === 'room_to_run' ? `接球后推进 +${sim.yacYards}码` :
+                       `接球后小幅推进 +${sim.yacYards}码 被拔旗`;
+        ctx.fillText(yacMsg, W / 2, H / 2 + 12);
+      } else if (sim.yacType === 'immediate_flag') {
+        ctx.fillStyle = '#aaa'; ctx.font = '10px "Courier New"';
+        ctx.fillText('接球即被拔旗', W / 2, H / 2 + 12);
+      }
     } else if (sim.isINT) {
       ctx.fillStyle = COL.uiPurple; ctx.font = 'bold 18px "Courier New"'; ctx.textAlign = 'center';
       ctx.fillText('INTERCEPTION!', W / 2, H / 2 - 20);
