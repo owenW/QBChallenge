@@ -737,6 +737,16 @@ function createPlayer(config) {
   shadow.position.y = 0.02;
   group.add(shadow);
 
+  // Position indicator (small colored dot above head for WR identification at distance)
+  if (accentColor || hasVisor || hasGloves || hasHeadband) {
+    const indicatorGeo = new THREE.SphereGeometry(0.06, 6, 4);
+    const indicatorColor = accentColor || visorColor || gloveColor || 0xffffff;
+    const indicatorMat = new THREE.MeshBasicMaterial({ color: indicatorColor });
+    const indicator = new THREE.Mesh(indicatorGeo, indicatorMat);
+    indicator.position.y = H * 0.92;
+    group.add(indicator);
+  }
+
   group.userData = {
     idleBob: Math.random() * Math.PI * 2,
     config,
@@ -2221,15 +2231,43 @@ function updateSimulation(dt) {
   sim.timer += sd;
 
   switch (sim.phase) {
-    case 'snap':
-      // Center snaps animation
-      if (sim.timer > 0.3) { sim.phase = 'dropback'; sim.timer = 0; }
+    case 'snap': {
+      // Center snaps animation — center bends, ball travels to QB
+      const snapProgress = Math.min(1, sim.timer / 0.25);
+      // Show ball during snap
+      footballObj.visible = true;
+      const centerWorld = fieldPos(currentPlay.offense.center.yard, currentPlay.offense.center.lane);
+      const qbWorld = fieldPos(sim.qbPos.yard, sim.qbPos.lane);
+      footballObj.position.lerpVectors(
+        centerWorld.clone().add(new THREE.Vector3(0, 0.8, 0)),
+        qbWorld.clone().add(new THREE.Vector3(0, 1.5, 0)),
+        easeOutCubic(snapProgress)
+      );
+      footballObj.rotation.z += dt * 15;
+      // Center snap bend
+      if (playerObjects.center) {
+        playerObjects.center.rotation.x = -0.3 * (1 - snapProgress);
+      }
+      if (sim.timer > 0.3) {
+        footballObj.visible = false; // QB has it, hide until throw
+        sim.phase = 'dropback'; sim.timer = 0;
+        cameraState.shakeIntensity = 0.15; // Subtle snap shake
+      }
       break;
+    }
 
     case 'dropback': {
-      const dropTarget = sim.qbStartYard - 3;
-      sim.qbPos.yard += (dropTarget - sim.qbPos.yard) * 0.1;
-      if (sim.timer > 0.5) { sim.phase = 'routes'; sim.timer = 0; }
+      const dropTarget = sim.qbStartYard - (game.formationType === 'shotgun' ? 0 : 3);
+      sim.qbPos.yard += (dropTarget - sim.qbPos.yard) * 0.12;
+      // QB backpedal animation
+      const legGroup = playerObjects.qb.getObjectByName('legGroup');
+      if (legGroup) {
+        const rl = legGroup.getObjectByName('rightLeg');
+        const ll = legGroup.getObjectByName('leftLeg');
+        if (rl) rl.rotation.x = Math.sin(sim.timer * 12) * 0.3;
+        if (ll) ll.rotation.x = -Math.sin(sim.timer * 12) * 0.3;
+      }
+      if (sim.timer > 0.45) { sim.phase = 'routes'; sim.timer = 0; }
       break;
     }
 
