@@ -1433,6 +1433,21 @@ function generatePlay(isElite, isBoss) {
   defense.name = defForm.name; defense.desc = defForm.desc || '';
   defense.idx = defIdx; defense.coverType = defForm.coverType;
 
+  // Goal-line defense: when offense is within 10 yards of end zone (ballYardLine >= 40),
+  // defense compresses toward the goal line (yard 50), NOT inside the end zone
+  if (game.ballYardLine >= 40) {
+    const goalLine = 50;
+    const distToGoal = goalLine - losY;
+    for (const db of defense.dbs) {
+      // Pull all DBs to goal line, don't let them go past it
+      db.yard = Math.min(goalLine, losY + Math.min(db.yard - losY, distToGoal));
+      // Tighter lane coverage near goal line
+      db.lane = db.lane * 0.8 + 30 * 0.2; // Compress toward center
+    }
+    // Rusher also compresses but stays on defensive side
+    defense.rusher.yard = Math.min(goalLine, defense.rusher.yard);
+  }
+
   // Double agent relic: 30% chance defense misaligns
   if (hasRelic('double_agent') && Math.random() < 0.3) {
     defense.dbs.forEach(db => { db.lane += (Math.random() - 0.5) * 15; });
@@ -1666,47 +1681,72 @@ function beginSimAfterPassType() {
   const intChance = calculateINTChance(sim.chosenWR, game.passType);
   if (!sim.success && Math.random() * 100 < intChance) sim.isINT = true;
   if (sim.success) {
-    // Base yards = route distance from LOS
+    // Base yards = route depth from LOS
     const routeYards = Math.max(1, Math.abs(routeEnd.yard - getLOSYard()));
-    // YAC (Run After Catch) system - flag football style
-    // Find closest DB to the catch point
-    const catchYard = getLOSYard() + routeYards;
+    
+    // YAC (Yards After Catch) - flag football style
+    // Calculate where each DB will be when the ball arrives at the catch point
+    const catchYard = routeEnd.yard;
     const catchLane = routeEnd.lane;
+    const throwTime = game.passType === 'bullet' ? 0.4 : game.passType === 'lob' ? 0.7 : 0.55;
+    
     let closestDBDist = 999;
     for (const db of currentPlay.defense.dbs) {
-      const dbEndYard = db.yard + (currentPlay.defense.coverType === 'man' ? routeYards * 0.9 : routeYards * 0.6);
-      const dist = Math.sqrt(Math.pow(dbEndYard - catchYard, 2) + Math.pow(db.lane - catchLane, 2));
+      // DB moves toward catch point during throw flight
+      let dbFinalYard, dbFinalLane;
+      if (db.role === 'man' && db.coverIdx === sim.chosenWR) {
+        // Man coverage DB trails the WR closely
+        dbFinalYard = catchYard + 1; // 1 yard behind WR
+        dbFinalLane = catchLane + (Math.random() * 4 - 2);
+      } else if (db.role === 'zone') {
+        // Zone DB reacts to throw, moves toward catch point
+        dbFinalYard = db.yard + (catchYard - db.yard) * 0.6;
+        dbFinalLane = db.lane + (catchLane - db.lane) * 0.4;
+      } else {
+        // Default: DB moves partially toward catch
+        dbFinalYard = db.yard + (catchYard - db.yard) * 0.5;
+        dbFinalLane = db.lane + (catchLane - db.lane) * 0.3;
+      }
+      const dist = Math.sqrt(Math.pow(dbFinalYard - catchYard, 2) + Math.pow(dbFinalLane - catchLane, 2));
       if (dist < closestDBDist) closestDBDist = dist;
     }
-    // YAC calculation based on DB proximity and WR speed
+    
+    // YAC calculation — realistic for flag football (45-yard field)
     let yacYards = 0;
     const wrSpd = wrs[sim.chosenWR].spd;
-    if (closestDBDist > 15) {
-      // Wide open - potential house call (TD run)
-      yacYards = 15 + Math.floor(Math.random() * 20) + Math.floor((wrSpd - 50) * 0.3);
+    const spdBonus = Math.max(0, Math.floor((wrSpd - 65) / 10)); // 0-3 bonus yards for speed
+    
+    if (closestDBDist > 12) {
+      // Truly wide open — breakaway, but capped for 45-yard field
+      yacYards = 8 + Math.floor(Math.random() * 8) + spdBonus;
       sim.yacType = 'wide_open';
-    } else if (closestDBDist > 8) {
-      // Some room to run, decent YAC
-      yacYards = 5 + Math.floor(Math.random() * 12) + Math.floor((wrSpd - 50) * 0.15);
+    } else if (closestDBDist > 6) {
+      // Some room — decent YAC before flag pull
+      yacYards = 3 + Math.floor(Math.random() * 5) + spdBonus;
       sim.yacType = 'room_to_run';
-    } else if (closestDBDist > 4) {
-      // Tight coverage, short YAC before flag pull
-      yacYards = 1 + Math.floor(Math.random() * 5);
+    } else if (closestDBDist > 3) {
+      // Defender close — quick flag pull
+      yacYards = 1 + Math.floor(Math.random() * 3);
       sim.yacType = 'flag_pull';
     } else {
-      // Immediate flag pull at catch point
+      // Defender right there — immediate flag
       yacYards = 0;
       sim.yacType = 'immediate_flag';
     }
-    // Short routes = higher catch rate but DB likely closer = less YAC
-    // Deep routes = lower catch rate but if caught, DB often out of position = more YAC potential
-    if (isDeepRoute(currentPlay.offense.wrs[sim.chosenWR].route) && closestDBDist > 10) {
-      yacYards += 5 + Math.floor(Math.random() * 10); // Deep ball + open = house call potential
+    
+    // Short routes: defenders are closer, less YAC unless defense playing deep
+    if (isShortRoute(currentPlay.offense.wrs[sim.chosenWR].route)) {
+      // Short route = defenders should be nearby, reduce YAC
+      if (closestDBDist < 8) yacYards = Math.min(yacYards, 3);
     }
-    // Ghost boots relic: +20% route running also helps YAC
-    if (hasRelic('ghost_boots')) yacYards = Math.floor(yacYards * 1.3);
-    sim.yardsGained = routeYards + yacYards;
-    sim.yacYards = yacYards;
+    
+    // Ghost boots relic
+    if (hasRelic('ghost_boots')) yacYards = Math.floor(yacYards * 1.2);
+    
+    // Cap total yards to remaining field (can't run past end zone)
+    const maxYards = 50 - game.ballYardLine;
+    sim.yardsGained = Math.min(routeYards + yacYards, maxYards);
+    sim.yacYards = Math.min(yacYards, Math.max(0, maxYards - routeYards));
     sim.routeYards = routeYards;
   }
   game.state = 'simulation';
