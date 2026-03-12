@@ -290,6 +290,32 @@ let relics = [];
 let defBuffs = [];
 let offDebuffs = [];
 
+// Build path tracking
+let buildPoints = { gunslinger: 0, westCoast: 0, mastermind: 0 };
+
+function getBuildPath() {
+    const { gunslinger, westCoast, mastermind } = buildPoints;
+    if (gunslinger >= 3 && gunslinger > westCoast && gunslinger > mastermind) return 'gunslinger';
+    if (westCoast >= 3 && westCoast > gunslinger && westCoast > mastermind) return 'westCoast';
+    if (mastermind >= 3 && mastermind > gunslinger && mastermind > westCoast) return 'mastermind';
+    return null;
+}
+
+// Audible system
+let audibleUnlocked = false;
+let currentFormationIdx = 0;
+let availableFormations = [];
+
+// Calamity system
+let calamityActive = null;
+let calamityPending = false;
+
+// Defense evolution tracking
+let defenseEvolutions = [];
+
+// TD celebration state
+let tdCelebration = { active: false, timer: 0, phase: 'idle' };
+
 // Defense disguise
 let defenseDisguised = false;
 let defenseRealFormation = null;
@@ -506,6 +532,22 @@ function generatePlay() {
                 db.y = offense.wrs[wrOrder[i].idx].y - 35;
             }
         });
+    }
+
+    // Double team system (level 7+): best WR gets extra coverage
+    if (currentLevel >= 7 && defenseEvolutions.includes('doubleTeam')) {
+        const bestWRIdx = wrStats.reduce((best, wr, idx) => {
+            const total = wr.speed + wr.catching + wr.routeRunning;
+            return total > (wrStats[best].speed + wrStats[best].catching + wrStats[best].routeRunning) ? idx : best;
+        }, 0);
+        // Move the closest non-man DB toward the best WR
+        const freeDB = defense.dbs.find(db => db.role !== 'man' || db.coverIdx !== bestWRIdx);
+        if (freeDB) {
+            freeDB.role = 'man';
+            freeDB.coverIdx = bestWRIdx;
+            freeDB.x = offense.wrs[bestWRIdx].x + 15;
+            freeDB.y = offense.wrs[bestWRIdx].y - 40;
+        }
     }
 
     // Disguise system (level 5+)
@@ -841,7 +883,9 @@ function handlePlayResult() {
             if (currentLevel >= maxLevel) {
                 gameState = 'victory';
             } else {
-                gameState = 'upgrade';
+                // Start TD celebration before upgrade
+                tdCelebration = { active: true, timer: 0, phase: 'explode' };
+                gameState = 'tdCelebration';
                 currentLevel++;
                 downs = { current: 1, yardsToGo: 20, ballPosition: 0 };
                 applyDefenseBuff();
@@ -878,6 +922,7 @@ let transitionTimer = 0;
 // UPGRADE & RELIC SYSTEM
 // ============================================================
 let upgradeOptions = [];
+let upgradeScreenTimer = 0;
 
 const qbUpgrades = [
     { name: '精准臂力', desc: '传球精准度 +8', apply: () => { qbStats.accuracy += 8; } },
@@ -956,13 +1001,19 @@ function applyUpgrade(index) {
     if (opt.type === 'qb') {
         opt.apply();
         qbStats.level++;
+        // Track build path
+        if (opt.name.includes('臂力') || opt.name.includes('火箭')) buildPoints.gunslinger++;
+        else if (opt.name.includes('阅读') || opt.name.includes('鹰眼')) buildPoints.mastermind++;
+        else buildPoints.gunslinger += 0.5;
     } else if (opt.type === 'wr') {
         const wr = wrStats[opt.target];
         if (opt.stat === 'all') { wr.speed += opt.value; wr.catching += opt.value; wr.routeRunning += opt.value; }
         else wr[opt.stat] += opt.value;
         wr.level++;
+        buildPoints.westCoast++;
     } else if (opt.type === 'debuff') {
         offDebuffs.push({ name: opt.name, value: opt.value });
+        buildPoints.mastermind++;
     } else if (opt.type === 'relic') {
         relics.push({ id: opt.id, name: opt.name, desc: opt.desc });
         if (opt.effect) opt.effect();
@@ -973,6 +1024,155 @@ function applyDefenseBuff() {
     if (currentLevel > 2 && Math.random() < 0.65) {
         const buff = defBuffPool[Math.floor(Math.random() * defBuffPool.length)];
         defBuffs.push({ ...buff });
+    }
+}
+
+// ============================================================
+// DEFENSE EVOLUTION
+// ============================================================
+function checkDefenseEvolution() {
+    if (currentLevel === 3 && !defenseEvolutions.includes('cover6')) {
+        defenseEvolutions.push('cover6');
+        return { name: 'Cover 6 解锁', desc: '防守学会了混合区域防守!' };
+    }
+    if (currentLevel === 5 && !defenseEvolutions.includes('disguise')) {
+        defenseEvolutions.push('disguise');
+        return { name: '伪装防守', desc: '防守开始伪装阵型!' };
+    }
+    if (currentLevel === 7 && !defenseEvolutions.includes('doubleTeam')) {
+        defenseEvolutions.push('doubleTeam');
+        return { name: '双人包夹', desc: '防守会包夹你最强的WR!' };
+    }
+    if (currentLevel === 9 && !defenseEvolutions.includes('allOutBlitz')) {
+        defenseEvolutions.push('allOutBlitz');
+        return { name: '全面闪电战', desc: '两个冲传手, 但只有3个DB!' };
+    }
+    return null;
+}
+
+// ============================================================
+// CALAMITY EVENTS (every 3 levels)
+// ============================================================
+let calamityOptions = [];
+
+const calamityPool = [
+    {
+        curse: { name: '球员受伤', desc: '随机WR全属性-15', icon: '🩹' },
+        reward: { name: '替补觉醒', desc: '另一个WR全属性+12', icon: '⚡' },
+        apply: () => {
+            const injuredIdx = Math.floor(Math.random() * 4);
+            let boostedIdx = (injuredIdx + 1 + Math.floor(Math.random() * 3)) % 4;
+            wrStats[injuredIdx].speed -= 15;
+            wrStats[injuredIdx].catching -= 15;
+            wrStats[injuredIdx].routeRunning -= 15;
+            wrStats[boostedIdx].speed += 12;
+            wrStats[boostedIdx].catching += 12;
+            wrStats[boostedIdx].routeRunning += 12;
+            return `${wrStats[injuredIdx].name}受伤! ${wrStats[boostedIdx].name}觉醒!`;
+        }
+    },
+    {
+        curse: { name: '暴风雨', desc: '全场精准度-12', icon: '🌧' },
+        reward: { name: '高风险高回报', desc: '码数得分x1.5', icon: '💰' },
+        apply: () => {
+            qbStats.accuracy -= 12;
+            offDebuffs.push({ name: '暴风雨加成', value: -15 }); // negative debuff = bonus scoring
+            return '暴风雨来袭! 精准度下降但得分加成!';
+        }
+    },
+    {
+        curse: { name: '间谍情报', desc: '防守额外+10', icon: '🕵' },
+        reward: { name: '圣物掉落', desc: '获得一个随机圣物', icon: '⭐' },
+        apply: () => {
+            defBuffs.push({ name: '间谍', desc: '情报加成', value: 10 });
+            const availRelics = relicPool.filter(r => !hasRelic(r.id));
+            if (availRelics.length > 0) {
+                const relic = availRelics[Math.floor(Math.random() * availRelics.length)];
+                relics.push({ id: relic.id, name: relic.name, desc: relic.desc });
+                if (relic.effect) relic.effect();
+                return `间谍泄露情报! 但获得圣物: ${relic.name}`;
+            }
+            return '间谍泄露情报! 但没有更多圣物可获取。';
+        }
+    },
+];
+
+function shouldShowCalamity() {
+    return currentLevel > 1 && (currentLevel - 1) % 3 === 0;
+}
+
+function generateCalamityOptions() {
+    const available = [...calamityPool];
+    const chosen = available[Math.floor(Math.random() * available.length)];
+    calamityOptions = [chosen];
+    calamityPending = true;
+}
+
+// ============================================================
+// AUDIBLE SYSTEM
+// ============================================================
+function setupAudibles() {
+    if (currentLevel >= 5 || hasRelic('filmStudy') || getBuildPath() === 'mastermind') {
+        audibleUnlocked = true;
+    }
+    currentFormationIdx = 0;
+    // Pick 3 random formations for audible switching
+    const indices = [];
+    while (indices.length < 3) {
+        const idx = Math.floor(Math.random() * offenseFormations.length);
+        if (!indices.includes(idx)) indices.push(idx);
+    }
+    availableFormations = indices;
+}
+
+function switchFormation(direction) {
+    if (!audibleUnlocked || !currentPlay) return;
+    playSound('tick');
+    currentFormationIdx = (currentFormationIdx + direction + availableFormations.length) % availableFormations.length;
+    const newOffIdx = availableFormations[currentFormationIdx];
+    const newOff = JSON.parse(JSON.stringify(offenseFormations[newOffIdx]));
+    currentPlay.offense = newOff;
+    currentPlay.offIdx = newOffIdx;
+    // Recalculate scores
+    currentPlay.wrScores = evaluateReceivers(currentPlay.offense, currentPlay.defense);
+    currentPlay.bestWR = currentPlay.wrScores.indexOf(Math.max(...currentPlay.wrScores));
+    triggerShake(1, 0.05);
+}
+
+// ============================================================
+// THROW WINDOW VISUALIZATION
+// ============================================================
+function drawThrowWindows() {
+    if (!currentPlay || gameState !== 'preSnap') return;
+    const clarity = Math.min(1, (qbStats.readSpeed + 1) / 8);
+    if (clarity < 0.2) return;
+
+    for (let i = 0; i < 4; i++) {
+        const wr = currentPlay.offense.wrs[i];
+        const path = routePaths[wr.route](wr.x, wr.y);
+        // Best throw window = ~60-80% through the route
+        const windowPct = 0.6 + Math.random() * 0.2;
+        const totalPts = path.length;
+        const segIdx = Math.min(Math.floor(windowPct * totalPts), totalPts - 1);
+        const fromX = segIdx === 0 ? wr.x : path[Math.max(0, segIdx - 1)].x;
+        const fromY = segIdx === 0 ? wr.y : path[Math.max(0, segIdx - 1)].y;
+        const toX = path[segIdx].x;
+        const toY = path[segIdx].y;
+        const t = windowPct * totalPts - segIdx;
+        const wx = fromX + (toX - fromX) * t;
+        const wy = fromY + (toY - fromY) * t;
+
+        // Flashing golden dot
+        const pulse = 0.4 + Math.sin(Date.now() / 250 + i * 1.5) * 0.4;
+        ctx.fillStyle = `rgba(212, 160, 23, ${pulse * clarity})`;
+        ctx.beginPath();
+        ctx.arc(wx, wy, 4, 0, Math.PI * 2);
+        ctx.fill();
+        // Inner bright dot
+        ctx.fillStyle = `rgba(255, 215, 0, ${pulse * clarity * 0.8})`;
+        ctx.beginPath();
+        ctx.arc(wx, wy, 2, 0, Math.PI * 2);
+        ctx.fill();
     }
 }
 
@@ -1568,18 +1768,28 @@ function drawTitle() {
 }
 
 function drawUpgradeScreen() {
+    upgradeScreenTimer += 1/60;
     ctx.fillStyle = '#0a0a1a';
     ctx.fillRect(0, 0, W, H);
 
-    // TD celebration
+    // Header
     ctx.fillStyle = PAL.gold;
     ctx.font = 'bold 24px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('达阵得分!', W / 2, 45);
+    ctx.fillText('选择升级', W / 2, 45);
 
     ctx.fillStyle = PAL.accent;
     ctx.font = '13px monospace';
     ctx.fillText(`进入第 ${currentLevel} 关`, W / 2, 70);
+
+    // Build path indicator
+    const path = getBuildPath();
+    if (path) {
+        const labels = { gunslinger: '枪手路线', westCoast: '西海岸路线', mastermind: '大师路线' };
+        ctx.fillStyle = PAL.gold;
+        ctx.font = '10px monospace';
+        ctx.fillText(`构建路线: ${labels[path]}`, W / 2, 52);
+    }
 
     // Defense buff notice
     if (defBuffs.length > 0) {
@@ -1593,14 +1803,28 @@ function drawUpgradeScreen() {
     ctx.font = '11px monospace';
     ctx.fillText('选择一项升级:', W / 2, 115);
 
-    // Upgrade cards
+    // Calamity result
+    if (calamityActive) {
+        ctx.fillStyle = PAL.gold;
+        ctx.font = '9px monospace';
+        ctx.fillText(calamityActive, W / 2, 98);
+    }
+
+    // Upgrade cards with slide-in animation
     upgradeButtons = [];
     const cardH = upgradeOptions.length > 3 ? 105 : 120;
     const startY = 130;
 
     for (let i = 0; i < upgradeOptions.length; i++) {
         const opt = upgradeOptions[i];
-        const cy = startY + i * (cardH + 12);
+        // Slide-in: each card delays by 0.15s
+        const slideDelay = i * 0.15;
+        const slideProgress = Math.min(1, Math.max(0, (upgradeScreenTimer - slideDelay) * 4));
+        // Elastic overshoot
+        const elastic = slideProgress >= 1 ? 0 : Math.sin(slideProgress * Math.PI * 1.5) * (1 - slideProgress) * 30;
+        const slideOffset = (1 - slideProgress) * (H + 50) + elastic;
+
+        const cy = startY + i * (cardH + 12) + slideOffset;
         const cx = 45;
         const cw = W - 90;
 
@@ -1741,6 +1965,237 @@ function drawButtonRect(btn) {
     ctx.font = 'bold 14px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(btn.text || '', btn.x + btn.w / 2, btn.y + btn.h / 2 + 5);
+}
+
+// ============================================================
+// TD CELEBRATION SCREEN
+// ============================================================
+function drawTDCelebration() {
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, W, H);
+
+    const t = tdCelebration.timer;
+    const cx = W / 2;
+    const cy = H / 2 - 60;
+
+    // Expanding burst ring
+    if (t < 1.0) {
+        const radius = t * 200;
+        const alpha = 1 - t;
+        ctx.strokeStyle = `rgba(255, 215, 0, ${alpha * 0.6})`;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        // Second ring
+        ctx.strokeStyle = `rgba(233, 69, 96, ${alpha * 0.4})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius * 0.7, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    // Big TOUCHDOWN text - explodes from center
+    if (t > 0.15) {
+        const textScale = Math.min(1.2, (t - 0.15) * 4);
+        const bounce = t < 0.5 ? 1 + Math.sin((t - 0.15) * 20) * 0.1 * (1 - t) : 1;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(textScale * bounce, textScale * bounce);
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.font = 'bold 40px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('TOUCHDOWN!', 2, 2);
+        // Main text
+        const glow = 0.8 + Math.sin(t * 10) * 0.2;
+        ctx.fillStyle = `rgba(255, 215, 0, ${glow})`;
+        ctx.fillText('TOUCHDOWN!', 0, 0);
+        ctx.restore();
+    }
+
+    // Score flash
+    if (t > 0.5) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 18px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`+${600} 达阵分!`, cx, cy + 50);
+    }
+
+    // Gold pixel rain
+    if (t > 0.2) {
+        for (let i = 0; i < 25; i++) {
+            const px = (Math.sin(i * 73.7 + t * 3) * 0.5 + 0.5) * W;
+            const py = ((i * 37.3 + t * 200) % (H + 20)) - 10;
+            const alpha = 0.3 + Math.sin(i * 11 + t * 5) * 0.2;
+            ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`;
+            ctx.fillRect(px, py, 3, 3);
+        }
+    }
+
+    // Defense evolution notice
+    if (t > 1.0) {
+        const evo = checkDefenseEvolution();
+        if (evo && t > 1.2) {
+            ctx.fillStyle = PAL.bad;
+            ctx.font = 'bold 12px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`⚠ ${evo.name}`, cx, cy + 90);
+            ctx.fillStyle = '#aaa';
+            ctx.font = '10px monospace';
+            ctx.fillText(evo.desc, cx, cy + 108);
+        }
+    }
+
+    drawParticles();
+}
+
+// ============================================================
+// CALAMITY EVENT SCREEN
+// ============================================================
+function drawCalamityScreen() {
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = PAL.accent;
+    ctx.font = 'bold 22px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('灾厄降临!', W / 2, 80);
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '11px monospace';
+    ctx.fillText('接受诅咒, 换取强力回报?', W / 2, 110);
+
+    if (calamityOptions.length > 0) {
+        const opt = calamityOptions[0];
+        const cardY = 150;
+
+        // Curse card
+        ctx.fillStyle = 'rgba(139, 34, 82, 0.3)';
+        ctx.fillRect(40, cardY, W - 80, 90);
+        ctx.strokeStyle = PAL.bad;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(40, cardY, W - 80, 90);
+        ctx.fillStyle = PAL.bad;
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${opt.curse.icon} 诅咒: ${opt.curse.name}`, W / 2, cardY + 30);
+        ctx.fillStyle = '#ccc';
+        ctx.font = '10px monospace';
+        ctx.fillText(opt.curse.desc, W / 2, cardY + 55);
+
+        // Reward card
+        const rewardY = cardY + 110;
+        ctx.fillStyle = 'rgba(45, 138, 78, 0.3)';
+        ctx.fillRect(40, rewardY, W - 80, 90);
+        ctx.strokeStyle = PAL.good;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(40, rewardY, W - 80, 90);
+        ctx.fillStyle = PAL.good;
+        ctx.font = 'bold 14px monospace';
+        ctx.fillText(`${opt.reward.icon} 回报: ${opt.reward.name}`, W / 2, rewardY + 30);
+        ctx.fillStyle = '#ccc';
+        ctx.font = '10px monospace';
+        ctx.fillText(opt.reward.desc, W / 2, rewardY + 55);
+
+        // Accept / Decline buttons
+        const btnY = rewardY + 120;
+        genericButtons = [
+            { x: 60, y: btnY, w: 180, h: 45, text: '接受交易', action: 'calamityAccept' },
+            { x: 300, y: btnY, w: 180, h: 45, text: '拒绝', action: 'calamityDecline' },
+        ];
+        genericButtons.forEach(b => drawButtonRect(b));
+    }
+}
+
+// ============================================================
+// PIXEL WIPE TRANSITION
+// ============================================================
+let wipeState = { active: false, progress: 0, direction: 1, callback: null };
+
+function startWipe(callback) {
+    wipeState = { active: true, progress: 0, direction: 1, callback };
+}
+
+function updateWipe(dt) {
+    if (!wipeState.active) return;
+    wipeState.progress += dt * 2.5;
+    if (wipeState.progress >= 1 && wipeState.direction === 1) {
+        wipeState.direction = -1;
+        wipeState.progress = 1;
+        if (wipeState.callback) wipeState.callback();
+        wipeState.callback = null;
+    }
+    if (wipeState.direction === -1) {
+        wipeState.progress -= dt * 3;
+        if (wipeState.progress <= 0) {
+            wipeState.active = false;
+        }
+    }
+}
+
+function drawWipe() {
+    if (!wipeState.active) return;
+    const progress = Math.max(0, Math.min(1, wipeState.progress));
+    const coverH = H * progress;
+    // Draw pixel football rolling across
+    for (let x = 0; x < W; x += 12) {
+        const offset = Math.sin(x * 0.05 + progress * 8) * 8;
+        const topY = wipeState.direction === 1
+            ? coverH - 20 + offset
+            : H - coverH - 20 + offset;
+        // Football shape
+        ctx.fillStyle = PAL.ball;
+        ctx.fillRect(x, topY, 10, 6);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(x + 4, topY, 2, 6);
+    }
+    // Cover area
+    ctx.fillStyle = '#0a0a1a';
+    if (wipeState.direction === 1) {
+        ctx.fillRect(0, 0, W, coverH - 15);
+    } else {
+        ctx.fillRect(0, H - coverH + 15, W, coverH);
+    }
+}
+
+// ============================================================
+// AUDIBLE INDICATOR
+// ============================================================
+function drawAudibleHint() {
+    if (!audibleUnlocked || gameState !== 'preSnap') return;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(W / 2 - 100, H - 115, 200, 16);
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('← A/D 切换阵型 →', W / 2, H - 104);
+
+    // Show formation dots
+    for (let i = 0; i < availableFormations.length; i++) {
+        const dx = W / 2 - 12 + i * 12;
+        ctx.fillStyle = i === currentFormationIdx ? PAL.gold : '#444';
+        ctx.fillRect(dx, H - 96, 6, 3);
+    }
+}
+
+// ============================================================
+// BUILD PATH DISPLAY
+// ============================================================
+function drawBuildPathIndicator() {
+    const path = getBuildPath();
+    if (!path) return;
+
+    const labels = { gunslinger: '枪手', westCoast: '西海岸', mastermind: '大师' };
+    const colors = { gunslinger: PAL.accent, westCoast: PAL.offLight, mastermind: PAL.gold };
+
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(8, H - 72, 55, 14);
+    ctx.fillStyle = colors[path];
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${labels[path]}路线`, 12, H - 62);
 }
 
 function drawChoosePrompt() {
@@ -1905,8 +2360,30 @@ function handleClick(e) {
             for (const btn of upgradeButtons) {
                 if (isInside(pos, btn)) {
                     applyUpgrade(btn.index);
-                    gameState = 'transition';
-                    transitionTimer = 0;
+                    calamityActive = null;
+                    startWipe(() => {
+                        setupAudibles();
+                        generatePlay();
+                        gameState = 'preSnap';
+                    });
+                    gameState = 'wiping';
+                    return;
+                }
+            }
+            break;
+
+        case 'calamity':
+            for (const btn of genericButtons) {
+                if (isInside(pos, btn)) {
+                    playSound('select');
+                    if (btn.action === 'calamityAccept') {
+                        const result = calamityOptions[0].apply();
+                        calamityActive = result;
+                        triggerShake(4, 0.3);
+                    }
+                    calamityPending = false;
+                    gameState = 'upgrade';
+                    upgradeScreenTimer = 0;
                     return;
                 }
             }
@@ -1923,6 +2400,17 @@ function handleClick(e) {
             break;
     }
 }
+
+// Keyboard input for audibles
+document.addEventListener('keydown', (e) => {
+    if (gameState === 'preSnap') {
+        if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') {
+            switchFormation(-1);
+        } else if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') {
+            switchFormation(1);
+        }
+    }
+});
 
 function isInside(pos, rect) {
     return pos.x >= rect.x && pos.x <= rect.x + rect.w &&
@@ -1947,7 +2435,15 @@ function startNewGame() {
     offDebuffs = [];
     relics = [];
     particles = [];
+    buildPoints = { gunslinger: 0, westCoast: 0, mastermind: 0 };
+    audibleUnlocked = false;
+    calamityActive = null;
+    calamityPending = false;
+    defenseEvolutions = [];
+    tdCelebration = { active: false, timer: 0, phase: 'idle' };
+    wipeState = { active: false, progress: 0, direction: 1, callback: null };
 
+    setupAudibles();
     generatePlay();
     gameState = 'preSnap';
 }
@@ -1968,6 +2464,7 @@ function gameLoop(timestamp) {
     updateShake(dt);
     updateCamera(dt);
     updateParticles(dt);
+    updateWipe(dt);
 
     ctx.clearRect(0, 0, W, H);
 
@@ -2037,8 +2534,11 @@ function gameLoop(timestamp) {
                 drawPixelSprite(currentPlay.offense.qb.x, currentPlay.offense.qb.y, 'qb', true, false, 'QB', animFrame);
             }
 
+            drawThrowWindows();
             drawChoosePrompt();
             drawReadTimer();
+            drawAudibleHint();
+            drawBuildPathIndicator();
             drawHUD();
             break;
 
@@ -2082,10 +2582,48 @@ function gameLoop(timestamp) {
             ctx.fillRect(0, 0, W, H);
 
             if (transitionTimer > 0.4) {
+                setupAudibles();
                 generatePlay();
                 gameState = 'preSnap';
             }
             break;
+
+        case 'tdCelebration':
+            tdCelebration.timer += dt;
+            ctx.restore();
+            drawTDCelebration();
+            // After 2 seconds, move to calamity check or upgrade
+            if (tdCelebration.timer > 2.0) {
+                tdCelebration.active = false;
+                if (shouldShowCalamity()) {
+                    generateCalamityOptions();
+                    gameState = 'calamity';
+                } else {
+                    gameState = 'upgrade';
+                    upgradeScreenTimer = 0;
+                }
+            }
+            requestAnimationFrame(gameLoop);
+            return;
+
+        case 'calamity':
+            ctx.restore();
+            drawCalamityScreen();
+            requestAnimationFrame(gameLoop);
+            return;
+
+        case 'wiping':
+            // During wipe, just show the wipe animation
+            ctx.restore();
+            ctx.fillStyle = '#0a0a1a';
+            ctx.fillRect(0, 0, W, H);
+            drawWipe();
+            if (!wipeState.active) {
+                // Wipe complete, state should already be set by callback
+                if (gameState === 'wiping') gameState = 'preSnap';
+            }
+            requestAnimationFrame(gameLoop);
+            return;
 
         case 'upgrade':
             ctx.restore();
@@ -2112,6 +2650,9 @@ function gameLoop(timestamp) {
 
     // Draw particles on top (no camera transform)
     drawParticles();
+
+    // Draw wipe on top of everything
+    drawWipe();
 
     requestAnimationFrame(gameLoop);
 }
