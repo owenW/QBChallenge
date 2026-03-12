@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>QB Challenge V12 — 3D Dynasty</title>
+<title>QB Challenge V13 — 3D Dynasty</title>
 <style>
 /* ============================================================
    RESET & GLOBAL
@@ -507,7 +507,7 @@ body {
 <!-- Loading Screen -->
 <div id="loading-screen">
   <h1>QB CHALLENGE</h1>
-  <div class="sub">3D DYNASTY · V12</div>
+  <div class="sub">3D DYNASTY · V13</div>
   <div class="load-bar"><div id="load-fill"></div></div>
   <div id="load-status">Initializing...</div>
 </div>
@@ -608,6 +608,12 @@ body {
 
 <!-- Commentary -->
 <div id="commentary"></div>
+
+<!-- Audio Controls -->
+<div id="audio-controls" style="position:fixed;bottom:8px;right:12px;z-index:50;display:flex;align-items:center;gap:6px;">
+  <button id="mute-btn" onclick="window._toggleMute()" style="background:rgba(8,10,20,0.85);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:4px 8px;color:#fff;font-size:16px;cursor:pointer;transition:all 0.15s;">🔊</button>
+  <input id="vol-slider" type="range" min="0" max="100" value="50" oninput="window._setVolume(this.value)" style="width:60px;height:3px;accent-color:#1e90ff;cursor:pointer;">
+</div>
 
 <!-- Panel Container (menus/overlays) -->
 <div id="panel-container"></div>
