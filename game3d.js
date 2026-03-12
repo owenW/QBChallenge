@@ -871,17 +871,40 @@ function createRouteLine(color) {
   return line;
 }
 
-// Route endpoint marker (target circle)
+// Route endpoint marker (pulsing crosshair)
 function createRouteTarget(color) {
-  const ringGeo = new THREE.RingGeometry(0.3, 0.5, 16);
+  const group = new THREE.Group();
+  // Outer ring
+  const ringGeo = new THREE.RingGeometry(0.4, 0.55, 20);
   const ringMat = new THREE.MeshBasicMaterial({
-    color, transparent: true, opacity: 0.6, side: THREE.DoubleSide,
+    color, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
   });
   const ring = new THREE.Mesh(ringGeo, ringMat);
   ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.05;
-  ring.visible = false;
-  return ring;
+  group.add(ring);
+  // Inner dot
+  const dotGeo = new THREE.CircleGeometry(0.12, 10);
+  const dotMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.7, side: THREE.DoubleSide,
+  });
+  const dot = new THREE.Mesh(dotGeo, dotMat);
+  dot.rotation.x = -Math.PI / 2;
+  dot.position.y = 0.01;
+  group.add(dot);
+  // Pulse ring
+  const pulseGeo = new THREE.RingGeometry(0.55, 0.6, 20);
+  const pulseMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.2, side: THREE.DoubleSide,
+  });
+  const pulse = new THREE.Mesh(pulseGeo, pulseMat);
+  pulse.rotation.x = -Math.PI / 2;
+  pulse.position.y = -0.005;
+  pulse.name = 'pulse';
+  group.add(pulse);
+
+  group.position.y = 0.06;
+  group.visible = false;
+  return group;
 }
 
 // ============================================================
@@ -1029,24 +1052,48 @@ function updateWeatherParticles(dt) {
 let losLine = null, fdLine = null;
 
 function createMarkerLines() {
-  // LOS — blue/yellow glow
+  // LOS — blue glow with outer halo
+  const losGroup = new THREE.Group();
   const losGeo = new THREE.PlaneGeometry(FIELD_WIDTH, 0.35);
   const losMat = new THREE.MeshBasicMaterial({
-    color: 0x2288ff, transparent: true, opacity: 0.65, side: THREE.DoubleSide,
+    color: 0x2288ff, transparent: true, opacity: 0.75, side: THREE.DoubleSide,
   });
-  losLine = new THREE.Mesh(losGeo, losMat);
-  losLine.rotation.x = -Math.PI / 2;
-  losLine.position.y = 0.03;
+  const losCore = new THREE.Mesh(losGeo, losMat);
+  losCore.rotation.x = -Math.PI / 2;
+  losGroup.add(losCore);
+  // Glow halo
+  const losHaloGeo = new THREE.PlaneGeometry(FIELD_WIDTH, 1.2);
+  const losHaloMat = new THREE.MeshBasicMaterial({
+    color: 0x2288ff, transparent: true, opacity: 0.12, side: THREE.DoubleSide,
+  });
+  const losHalo = new THREE.Mesh(losHaloGeo, losHaloMat);
+  losHalo.rotation.x = -Math.PI / 2;
+  losHalo.position.y = -0.005;
+  losGroup.add(losHalo);
+  losGroup.position.y = 0.04;
+  losLine = losGroup;
   scene.add(losLine);
 
-  // First down line — yellow
-  const fdGeo = new THREE.PlaneGeometry(FIELD_WIDTH, 0.25);
+  // First down line — yellow with glow
+  const fdGroup = new THREE.Group();
+  const fdGeo = new THREE.PlaneGeometry(FIELD_WIDTH, 0.3);
   const fdMat = new THREE.MeshBasicMaterial({
-    color: 0xffcc00, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+    color: 0xffcc00, transparent: true, opacity: 0.65, side: THREE.DoubleSide,
   });
-  fdLine = new THREE.Mesh(fdGeo, fdMat);
-  fdLine.rotation.x = -Math.PI / 2;
-  fdLine.position.y = 0.03;
+  const fdCore = new THREE.Mesh(fdGeo, fdMat);
+  fdCore.rotation.x = -Math.PI / 2;
+  fdGroup.add(fdCore);
+  // Glow
+  const fdHaloGeo = new THREE.PlaneGeometry(FIELD_WIDTH, 1.0);
+  const fdHaloMat = new THREE.MeshBasicMaterial({
+    color: 0xffcc00, transparent: true, opacity: 0.08, side: THREE.DoubleSide,
+  });
+  const fdHalo = new THREE.Mesh(fdHaloGeo, fdHaloMat);
+  fdHalo.rotation.x = -Math.PI / 2;
+  fdHalo.position.y = -0.005;
+  fdGroup.add(fdHalo);
+  fdGroup.position.y = 0.04;
+  fdLine = fdGroup;
   scene.add(fdLine);
 }
 
@@ -2484,10 +2531,16 @@ function updateSimulation(dt) {
         cameraState.target.set(0, 1, yardToZ(50));
         cameraState.offset.set(Math.sin(angle) * 20, 8, yardToZ(50) + Math.cos(angle) * 20);
       } else if (sim.phase === 'catch') {
-        // Zoom toward receiver
+        // Dramatic side angle zoom toward receiver
         const wrWorld = fieldPos(sim.ballTarget.yard, sim.ballTarget.lane);
-        cameraState.target.lerp(wrWorld, 0.06);
-        cameraState.offset.set(wrWorld.x + 12, 6, wrWorld.z + 8);
+        cameraState.target.lerp(wrWorld, 0.08);
+        const side = wrWorld.x > 0 ? -1 : 1;
+        cameraState.offset.lerp(new THREE.Vector3(wrWorld.x + side * 10, 4, wrWorld.z + 5), 0.06);
+      } else if (sim.phase === 'throw' && sim.throwProgress > 0.3) {
+        // Track ball flight — smooth follow
+        const ballWorld = fieldPos(sim.ballPos.yard, sim.ballPos.lane);
+        cameraState.target.lerp(ballWorld, 0.05);
+        cameraState.offset.lerp(new THREE.Vector3(ballWorld.x + 30, 18, ballWorld.z + 12), 0.04);
       } else {
         cameraState.target.lerp(focusWorld, 0.04);
         cameraState.offset.set(focusWorld.x + 42, 25, focusWorld.z + 18);
@@ -3352,11 +3405,18 @@ function gameLoop(timestamp) {
   }
 
   // Update camera
-  if (game.state === 'reading' || game.state === 'choosing' || game.state === 'simulation' || game.state === 'passType') {
-    if (!sim || !cameraState.heroZoom) {
-      const focusZ = currentPlay ? yardToZ(game.ballYardLine + 10) : 0;
-      cameraState.target.set(0, 0, focusZ);
-      cameraState.offset.set(48, 28, focusZ + 18);
+  if (game.state === 'reading' || game.state === 'choosing') {
+    // Pre-snap: wide broadcast shot showing entire formation
+    const focusZ = currentPlay ? yardToZ(game.ballYardLine + 10) : 0;
+    cameraState.target.lerp(new THREE.Vector3(0, 0, focusZ), 0.03);
+    cameraState.offset.lerp(new THREE.Vector3(50, 30, focusZ + 20), 0.025);
+  } else if ((game.state === 'simulation' || game.state === 'passType') && sim) {
+    // Handled inside updateSimulation camera logic
+    if (!cameraState.heroZoom && sim.phase === 'snap') {
+      // Quick zoom in during snap
+      const focusZ = yardToZ(game.ballYardLine);
+      cameraState.target.lerp(new THREE.Vector3(0, 0, focusZ), 0.05);
+      cameraState.offset.lerp(new THREE.Vector3(38, 22, focusZ + 15), 0.04);
     }
   } else {
     // Menu state - cinematic slow orbit
@@ -3376,8 +3436,24 @@ function gameLoop(timestamp) {
   updateBallTrail(dt);
   updateWeatherParticles(dt);
 
-  // Route target spin animation
-  routeTargets.forEach(t => { if (t.visible) t.rotation.z = game.time * 2; });
+  // Pulse LOS line opacity
+  if (losLine && losLine.visible) {
+    const pulse = 0.65 + Math.sin(game.time * 3) * 0.1;
+    if (losLine.children && losLine.children[0]) losLine.children[0].material.opacity = pulse;
+  }
+
+  // Route target pulse animation
+  routeTargets.forEach(t => {
+    if (t.visible) {
+      t.rotation.z = game.time * 1.5;
+      const pulse = t.getObjectByName('pulse');
+      if (pulse) {
+        const s = 1 + Math.sin(game.time * 4) * 0.3;
+        pulse.scale.set(s, s, s);
+        pulse.material.opacity = 0.15 + Math.sin(game.time * 4) * 0.1;
+      }
+    }
+  });
 
   // Render
   renderer.render(scene, camera);
