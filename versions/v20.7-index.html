@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>QB Challenge V15 — Pixel Art Roguelike (QB Tested)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #12100e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+            font-family: 'Courier New', monospace;
+        }
+        canvas {
+            border: 2px solid #3a3020;
+            border-radius: 2px;
+            box-shadow: 0 0 30px rgba(200,168,92,0.08), 0 8px 32px rgba(0,0,0,0.8);
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #loadingScreen {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #12100e;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            color: #d8c8a0;
+            font-family: 'Courier New', monospace;
+        }
+        #loadingScreen h1 {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: 4px;
+            color: #d8c8a0;
+            margin-bottom: 6px;
+        }
+        #loadingScreen .sub {
+            font-size: 11px;
+            color: #8a7650;
+            letter-spacing: 3px;
+            margin-bottom: 24px;
+        }
+        #loadBar {
+            width: 200px;
+            height: 4px;
+            background: #2a2218;
+            border: 1px solid #5a4a30;
+            overflow: hidden;
+        }
+        #loadFill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #c8a85c, #d4a840);
+            transition: width 0.2s;
+        }
+        #loadText {
+            margin-top: 10px;
+            font-size: 10px;
+            color: #5a4a30;
+        }
+    </style>
+</head>
+<body>
+    <div id="loadingScreen">
+        <h1>QB CHALLENGE</h1>
+        <div class="sub">◆ ROGUELIKE EDITION ◆</div>
+        <div id="loadBar"><div id="loadFill"></div></div>
+        <div id="loadText">初始化中...</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <script src="v20.7-arm-range.js"></script>
+</body>
+</html>
