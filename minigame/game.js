@@ -15,6 +15,19 @@ const canvas = wx.createCanvas();
 const ctx = canvas.getContext('2d');
 const _sysInfo = wx.getSystemInfoSync();
 const DPR = _sysInfo.pixelRatio || 2;
+
+// Safe area: avoid notch/dynamic island at top, home indicator at bottom, rounded corners
+const _safeArea = _sysInfo.safeArea || { top: 0, bottom: _sysInfo.windowHeight, left: 0, right: _sysInfo.windowWidth };
+const SAFE = {
+  top: _safeArea.top || 0,                                    // e.g. 59pt on iPhone 17 PM (Dynamic Island)
+  bottom: (_sysInfo.windowHeight - (_safeArea.bottom || _sysInfo.windowHeight)) || 0,  // e.g. 34pt (home indicator)
+  left: _safeArea.left || 0,
+  right: (_sysInfo.windowWidth - (_safeArea.right || _sysInfo.windowWidth)) || 0,
+};
+// Ensure minimum safe margins even if safeArea API unavailable
+SAFE.top = Math.max(SAFE.top, 20);     // at least 20pt top margin
+SAFE.bottom = Math.max(SAFE.bottom, 16); // at least 16pt bottom margin
+
 const W = _sysInfo.windowWidth;   // device logical width (e.g. 393 on iPhone 17 Pro Max)
 const H = _sysInfo.windowHeight;  // device logical height (e.g. 852)
 canvas.width = W * DPR;
@@ -23,10 +36,7 @@ canvas.height = H * DPR;
 // Touch coordinates are already in logical points on WeChat
 let _touchScaleX = 1;
 let _touchScaleY = 1;
-function resize() {
-  // Canvas already sized, touch 1:1
-  _touchScaleX = 1; _touchScaleY = 1;
-}
+function resize() { _touchScaleX = 1; _touchScaleY = 1; }
 wx.onWindowResize(info => { _touchScaleX = 1; _touchScaleY = 1; });
 
 
@@ -168,10 +178,10 @@ const WR_COLORS = ['#5888c8', '#c8a840', '#48b870', '#c06888'];
 // FIELD COORDINATE SYSTEM
 // ============================================================
 const FIELD = {
-  left: Math.round(W * 0.0625),      // 30/480 → proportional left margin
-  top: Math.round(H * 0.103),        // 80/780 → proportional top
-  width: Math.round(W * 0.875),      // 420/480 → proportional width
-  height: Math.round(H * 0.564),     // 440/780 → proportional height
+  left: Math.round(W * 0.0625),                    // proportional left margin
+  top: Math.round(SAFE.top + H * 0.06),            // safe area top + proportional offset
+  width: Math.round(W * 0.875),                    // proportional width
+  height: Math.round((H - SAFE.top - SAFE.bottom) * 0.55), // proportional to usable height
   toScreen(yard, lane) {
     return { x: this.left + (lane / 60) * this.width, y: this.top + this.height - (yard / 50) * this.height };
   },
@@ -1481,7 +1491,7 @@ const PostFX = {
   triggerBloom(alpha) { this.bloomAlpha = alpha; },
   apply(c, w, h) {
     if (!vignetteCanvas) generateVignette();
-    c.save(); c.globalAlpha = 0.6; c.drawImage(vignetteCanvas, 0, 0); c.restore();
+    c.save(); c.globalAlpha = 0.6; c.drawImage(vignetteCanvas, 0, 0, W, H); c.restore();
     if (this.bloomAlpha > 0.01) {
       c.save(); c.fillStyle = `rgba(232,220,200,${this.bloomAlpha * 0.2})`;
       c.fillRect(0, 0, w, h); c.restore(); this.bloomAlpha *= this.bloomDecay;
@@ -3221,7 +3231,7 @@ function drawRadarChart(c, cx, cy, r, stats, labels, color) {
 // SCORE BUG — Pixel Art Style
 // ============================================================
 function drawScoreBug() {
-  const bH = 60, bY = H - bH - 4, bX = 6, bW = W - 12;
+  const bH = 60, bY = H - bH - SAFE.bottom - 4, bX = 6, bW = W - 12;
   ctx.save();
   drawPixelRect(ctx, bX, bY, bW, bH, COL.scoreBug, COL.cardBorder);
   // Accent line
@@ -3276,7 +3286,7 @@ function drawPoiseRating() {
   const level = getComposureLevel();
   const labels = { cool: '冷静', nervous: '紧张', shaky: '颤抖', tilted: '崩溃' };
   const colors = { cool: COL.uiGreen, nervous: COL.uiYellow, shaky: COL.uiOrange, tilted: COL.uiRed };
-  const pw = 64, px = W - pw - 6, py = 80, col = colors[level];
+  const pw = 64, px = W - pw - 6, py = SAFE.top + 55, col = colors[level];
   const poise = 100 - game.stress;
   ctx.save();
   drawPixelRect(ctx, px - 2, py - 2, pw + 4, 54, COL.cardBg, COL.cardBorder);
@@ -3299,39 +3309,41 @@ function drawRelicsBar() {
   if (relics.length === 0) return;
   ctx.save();
   for (let i = 0; i < relics.length; i++) {
-    drawPixelRect(ctx, 4 + i * 18, 78, 16, 16, 'rgba(42,34,28,0.8)', 'rgba(138,118,80,0.4)');
+    drawPixelRect(ctx, 4 + i * 18, SAFE.top + 53, 16, 16, 'rgba(42,34,28,0.8)', 'rgba(138,118,80,0.4)');
     ctx.font = '14px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(relics[i].icon, 12 + i * 18, 87);
+    ctx.fillText(relics[i].icon, 12 + i * 18, SAFE.top + 62);
   }
   ctx.restore();
 }
 
 function drawTopBar() {
   ctx.save();
-  const g = ctx.createLinearGradient(0, 0, 0, 55);
+  const _topBarH = SAFE.top + 50;
+  const g = ctx.createLinearGradient(0, 0, 0, _topBarH);
   g.addColorStop(0, 'rgba(18,16,14,0.85)'); g.addColorStop(1, 'rgba(18,16,14,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 55);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, _topBarH);
 
+  const _tY = SAFE.top; // text Y offset for safe area
   if (currentPlay) {
     ctx.fillStyle = COL.parchment; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'left';
-    ctx.fillText(currentPlay.offense.name, 10, 18);
+    ctx.fillText(currentPlay.offense.name, 10, _tY + 16);
     if ((hasRelic('film_study') || game.scoutReport || game.filmStudyFloorsLeft > 0 || hasRelic('defense_handbook')) && currentPlay) {
       ctx.fillStyle = COL.uiRed; ctx.font = '11px "Courier New"';
-      ctx.fillText(`防守: ${currentPlay.defense.name}`, 10, 32);
+      ctx.fillText(`防守: ${currentPlay.defense.name}`, 10, _tY + 30);
     }
     const team = getCurrentTeam();
     ctx.fillStyle = COL.uiOrange; ctx.font = '11px "Courier New"';
-    ctx.fillText(`${team.icon} vs ${team.name}`, 10, 46);
+    ctx.fillText(`${team.icon} vs ${team.name}`, 10, _tY + 44);
   }
 
   ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"'; ctx.textAlign = 'right';
-  ctx.fillText(`ACC:${qb.accuracy} ARM:${qb.arm}`, W - 10, 18);
+  ctx.fillText(`ACC:${qb.accuracy} ARM:${qb.arm}`, W - 10, _tY + 16);
 
   const weather = Weather.getWeatherForGame(game.gameNum);
   if (weather !== 'day') {
     const wIcons = { dusk: '🌅', night: '🌙', rain: '🌧️', snow: '❄️' };
     ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
-    ctx.fillText(`${wIcons[weather] || ''} ${weather.toUpperCase()}`, W - 10, 32);
+    ctx.fillText(`${wIcons[weather] || ''} ${weather.toUpperCase()}`, W - 10, _tY + 30);
   }
 
   // Season record
@@ -3339,7 +3351,7 @@ function drawTopBar() {
   const wins = game.seasonRecord.filter(r => r.won).length;
   const ties = game.seasonRecord.filter(r => r.tied).length;
   const losses = game.seasonRecord.filter(r => !r.won && !r.tied).length;
-  ctx.fillText(`${wins}W${ties ? '-' + ties + 'T' : ''}-${losses}L`, W - 10, 46);
+  ctx.fillText(`${wins}W${ties ? '-' + ties + 'T' : ''}-${losses}L`, W - 10, _tY + 44);
   ctx.restore();
 }
 
@@ -3348,7 +3360,7 @@ function drawTopBar() {
 // ============================================================
 function drawField() {
   if (!fieldTexture) generateFieldTexture();
-  ctx.drawImage(fieldTexture, 0, 0);
+  ctx.drawImage(fieldTexture, 0, 0, W, H);
   Weather.drawWeatherOverlay(ctx);
   const fl = FIELD.left, fw = FIELD.width;
   const losScr = FIELD.toScreen(game.ballYardLine, 0);
@@ -3465,61 +3477,64 @@ function drawTitle(dt) {
   ctx.fillStyle = '#12100e'; ctx.fillRect(0, 0, W, H);
 
   // Pixel art field background
-  if (fieldTexture) { ctx.save(); ctx.globalAlpha = 0.25; ctx.drawImage(fieldTexture, 0, 0); ctx.restore(); }
+  if (fieldTexture) { ctx.save(); ctx.globalAlpha = 0.25; ctx.drawImage(fieldTexture, 0, 0, W, H); ctx.restore(); }
 
   // Title
   ctx.save(); ctx.textAlign = 'center';
   const pulse = Math.sin(titleAnim.timer * 2) * 0.1 + 0.9;
   ctx.fillStyle = COL.parchment; ctx.font = 'bold 34px "Courier New", monospace';
-  ctx.fillText('QB CHALLENGE', W / 2, 75);
+  ctx.fillText('QB CHALLENGE', W / 2, SAFE.top + 40);
   ctx.fillStyle = COL.uiGold; ctx.font = 'bold 16px "Courier New"';
-  ctx.fillText('◆ ROGUELIKE EDITION ◆', W / 2, 100);
+  ctx.fillText('◆ ROGUELIKE EDITION ◆', W / 2, SAFE.top + 65);
   // Version badge
-  drawPixelRect(ctx, W - 42, 8, 34, 16, 'rgba(212,168,64,0.2)', COL.uiGold);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.fillText('V15', W - 30, 19);
+  drawPixelRect(ctx, W - 42, SAFE.top + 4, 34, 16, 'rgba(212,168,64,0.2)', COL.uiGold);
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.fillText('V15', W - 30, SAFE.top + 15);
   ctx.restore();
 
   ctx.strokeStyle = 'rgba(232,220,200,0.15)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(W / 2 - 80, 112); ctx.lineTo(W / 2 + 80, 112); ctx.stroke();
+  const _st = SAFE.top; // shorthand for title layout
+  ctx.beginPath(); ctx.moveTo(W / 2 - 80, _st + 78); ctx.lineTo(W / 2 + 80, _st + 78); ctx.stroke();
 
   // Career stats
   if (Career.data && Career.data.seasons > 0) {
     ctx.save();
-    drawCardFrame(ctx, 20, 122, W - 40, 70, false);
+    drawCardFrame(ctx, 20, _st + 88, W - 40, 70, false);
     ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
-    ctx.fillText('生涯数据', W / 2, 136);
+    ctx.fillText('生涯数据', W / 2, _st + 102);
     ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
-    ctx.fillText(`${Career.data.seasons}赛季 · ${Career.getCareerCompPct()}%命中 · ${Career.data.careerYards}码 · ${Career.data.careerTD}TD · ${Career.data.careerINT}INT`, W / 2, 152);
+    ctx.fillText(`${Career.data.seasons}赛季 · ${Career.getCareerCompPct()}%命中 · ${Career.data.careerYards}码 · ${Career.data.careerTD}TD · ${Career.data.careerINT}INT`, W / 2, _st + 118);
     ctx.fillStyle = COL.uiGold; ctx.font = 'bold 12px "Courier New"';
-    ctx.fillText(`最佳评分: ${Career.data.bestRating.toFixed(1)} | 🏆×${Career.data.championships || 0}`, W / 2, 168);
+    ctx.fillText(`最佳评分: ${Career.data.bestRating.toFixed(1)} | 🏆×${Career.data.championships || 0}`, W / 2, _st + 134);
     const legacy = Career.getLegacyBonus();
-    if (legacy > 0) { ctx.fillStyle = COL.uiGreen; ctx.font = '11px "Courier New"'; ctx.fillText(`传承加成: +${legacy} ACC`, W / 2, 182); }
+    if (legacy > 0) { ctx.fillStyle = COL.uiGreen; ctx.font = '11px "Courier New"'; ctx.fillText(`传承加成: +${legacy} ACC`, W / 2, _st + 148); }
     ctx.restore();
   }
 
-  // Pixel art QB sprite
-  drawPixelPlayer(ctx, W / 2 - 40, 280, 'offense', 7, 'throw', Math.floor(titleAnim.timer * 4) % 6, true, 1.5, null);
-  drawPixelPlayer(ctx, W / 2 + 50, 260, 'offense', 81, 'run', titleAnim.spriteFrame, false, 1.2, null);
+  // Pixel art QB sprite - center vertically in available space
+  const _midY = SAFE.top + (H - SAFE.top - SAFE.bottom) * 0.33;
+  drawPixelPlayer(ctx, W / 2 - 40, _midY, 'offense', 7, 'throw', Math.floor(titleAnim.timer * 4) % 6, true, 1.5, null);
+  drawPixelPlayer(ctx, W / 2 + 50, _midY - 20, 'offense', 81, 'run', titleAnim.spriteFrame, false, 1.2, null);
 
   // Feature list
   ctx.fillStyle = 'rgba(232,220,200,0.4)'; ctx.font = '12px "Courier New"'; ctx.textAlign = 'center';
-  ctx.fillText('12支独特防守球队 · 明星球员系统 · 25+圣物', W / 2, 330);
-  ctx.fillText('像素风美术 · 赛季制10场比赛 · 随机事件', W / 2, 346);
+  ctx.fillText('12支独特防守球队 · 明星球员系统 · 25+圣物', W / 2, _midY + 50);
+  ctx.fillText('像素风美术 · 赛季制10场比赛 · 随机事件', W / 2, _midY + 66);
 
-  // Buttons
+  // Buttons - positioned in lower third
   genericButtons = [];
-  const startBtn = { x: W / 2 - 80, y: 370, w: 160, h: 40, text: '◆ 开始新赛季 ◆', action: 'start' };
+  const _btnY = SAFE.top + (H - SAFE.top - SAFE.bottom) * 0.52;
+  const startBtn = { x: W / 2 - 80, y: _btnY, w: 160, h: 40, text: '◆ 开始新赛季 ◆', action: 'start' };
   genericButtons.push(startBtn);
   drawPixelButton(ctx, startBtn, isInsideRect(mouseX, mouseY, startBtn.x, startBtn.y, startBtn.w, startBtn.h));
 
-  const chalBtn = { x: W / 2 - 65, y: 420, w: 130, h: 30, text: '🎲 挑战码', action: 'challenge' };
+  const chalBtn = { x: W / 2 - 65, y: _btnY + 50, w: 130, h: 30, text: '🎲 挑战码', action: 'challenge' };
   genericButtons.push(chalBtn);
   drawPixelButton(ctx, chalBtn, isInsideRect(mouseX, mouseY, chalBtn.x, chalBtn.y, chalBtn.w, chalBtn.h));
 
   // V21.6: Leaderboard on title screen
   if (Leaderboard.loaded && Leaderboard.scores.length > 0) {
     const top5 = Leaderboard.scores.slice(0, 5);
-    const lbY = 460;
+    const lbY = _btnY + 90;
     drawCardFrame(ctx, 20, lbY, W - 40, top5.length * 18 + 24, false);
     ctx.fillStyle = COL.uiGold; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText('🏆 排行榜', W / 2, lbY + 14);
@@ -3844,7 +3859,7 @@ function drawReadingPhase(dt) {
 let cardButtons = [];
 function drawWRCards(interactive) {
   if (!currentPlay) return;
-  const cW = 108, cH = 148, totalW = 4 * cW + 3 * 4, startX = (W - totalW) / 2, baseY = H - cH - 62;
+  const cW = Math.round((W - 30) / 4.2), cH = Math.round(cW * 1.4), totalW = 4 * cW + 3 * 4, startX = (W - totalW) / 2, baseY = H - cH - SAFE.bottom - 62;
   cardButtons = [];
   for (let i = 0; i < 4; i++) {
     const wr = wrs[i], pw = currentPlay.offense.wrs[i], prob = calculateCatchProb(i, 'touch');
