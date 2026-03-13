@@ -16,14 +16,12 @@ let innerWidth = _sysInfo.windowWidth;
 let innerHeight = _sysInfo.windowHeight;
 let _touchScaleX = W / innerWidth;
 let _touchScaleY = H / innerHeight;
-function resize() { const si = wx.getSystemInfoSync(); innerWidth = si.windowWidth; innerHeight = si.windowHeight; _touchScaleX = W / innerWidth; _touchScaleY = H / innerHeight; }
-wx.onWindowResize(info => { innerWidth = info.windowWidth; innerHeight = info.windowHeight; _touchScaleX = W / innerWidth; _touchScaleY = H / innerHeight; });
 function resize() {
-  const r = W / H, mw = innerWidth, mh = innerHeight;
-  let w, h;
-  if (mw / mh > r) { h = mh; w = h * r; } else { w = mw; h = w / r; }
-  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  const si = wx.getSystemInfoSync();
+  innerWidth = si.windowWidth; innerHeight = si.windowHeight;
+  _touchScaleX = W / innerWidth; _touchScaleY = H / innerHeight;
 }
+wx.onWindowResize(info => { innerWidth = info.windowWidth; innerHeight = info.windowHeight; _touchScaleX = W / innerWidth; _touchScaleY = H / innerHeight; });
 
 
 // ============================================================
