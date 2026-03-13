@@ -1,0 +1,13 @@
+{
+  "appid": "wx_placeholder_appid",
+  "projectname": "QBChallenge",
+  "description": "QB Challenge — 像素风橄榄球四分卫模拟器",
+  "setting": {
+    "es6": true,
+    "minify": false,
+    "urlCheck": false
+  },
+  "compileType": "game",
+  "libVersion": "3.3.0",
+  "condition": {}
+}
