@@ -2062,13 +2062,22 @@ function updateSimulation(dt) {
       sim.resultTimer = Math.min(1, sim.timer / 0.5);
       if (sim.timer > 3.0) handlePlayResult(); break;
     case 'throw': {
-      const throwDuration = game.passType === 'bullet' ? 0.4 : game.passType === 'lob' ? 0.7 : 0.55;
-      sim.throwProgress = Math.min(1, sim.timer / throwDuration);
+      // V18.4: Ball flight is physics-based — duration = distance / ball_speed
+      if (!sim.throwDuration) {
+        const ballSpeed = game.passType === 'bullet' ? PHYSICS.BALL_SPEED_BULLET
+          : game.passType === 'lob' ? PHYSICS.BALL_SPEED_LOB : PHYSICS.BALL_SPEED_TOUCH;
+        const dx = sim.ballTarget.yard - sim.qbPos.yard;
+        const dl = sim.ballTarget.lane - sim.qbPos.lane;
+        const dist = Math.sqrt(dx * dx + dl * dl);
+        sim.throwDuration = Math.max(0.25, dist / ballSpeed); // seconds for ball to arrive
+      }
+      sim.throwProgress = Math.min(1, sim.timer / sim.throwDuration);
       sim.throwPowerTimer -= sd;
-      // V18.1: Thrown-to WR adjusts to meet the ball; others continue routes
+
+      // All players continue moving during throw
       for (let i = 0; i < 4; i++) {
         if (i === sim.chosenWR) {
-          // Run toward the ball target (lead point), not route end
+          // Thrown-to WR runs toward the ball landing point
           physicsMove(sim.wrEntities[i], sim.ballTarget.yard, sim.ballTarget.lane, sd);
         } else {
           const path = routePaths[currentPlay.offense.wrs[i].route](currentPlay.offense.wrs[i].yard, currentPlay.offense.wrs[i].lane);
@@ -2076,43 +2085,52 @@ function updateSimulation(dt) {
           physicsMove(sim.wrEntities[i], end.yard, end.lane, sd);
         }
       }
-      // V18: All DBs react to ball — physicsMove toward catch target at realistic speed
+      // DBs react to ball with physics
       for (let i = 0; i < 4; i++) {
         const db = sim.dbEntities[i];
-        // Zone DBs have brief reaction delay before chasing ball
         if (!db.hasReacted && (db.role !== 'man' || db.coverIdx !== sim.chosenWR)) {
           db.reactionTimer -= sd;
           if (db.reactionTimer <= 0) db.hasReacted = true;
-          // Still use physicsMove toward current position (hold/drift)
           physicsMove(db, db.yard + 0.5, db.lane, sd);
         } else {
           physicsMove(db, sim.ballTarget.yard, sim.ballTarget.lane, sd);
         }
       }
-      // Ball flies to the lead point — do NOT track WR position after throw
-      sim.ballPos.yard = sim.qbPos.yard + (sim.ballTarget.yard - sim.qbPos.yard) * sim.throwProgress;
-      sim.ballPos.lane = sim.qbPos.lane + (sim.ballTarget.lane - sim.qbPos.lane) * sim.throwProgress;
-      sim.ballTrail.push({ ...sim.ballPos }); if (sim.ballTrail.length > 8) sim.ballTrail.shift();
+
+      // V18.4: Ball trajectory — bullet=straight line, touch=slight arc, lob=high arc
+      const t = sim.throwProgress;
+      const startY = sim.qbPos.yard, startL = sim.qbPos.lane;
+      const endY = sim.ballTarget.yard, endL = sim.ballTarget.lane;
+      // Horizontal: linear interpolation
+      sim.ballPos.yard = startY + (endY - startY) * t;
+      sim.ballPos.lane = startL + (endL - startL) * t;
+      // Vertical arc (visual only, stored as ballArc for drawing)
+      // Lob has big arc, touch medium, bullet almost flat
+      const arcHeight = game.passType === 'lob' ? 12 : game.passType === 'touch' ? 5 : 1;
+      sim.ballArc = arcHeight * 4 * t * (1 - t); // parabola: peaks at t=0.5
+      sim.ballTrail.push({ yard: sim.ballPos.yard, lane: sim.ballPos.lane, arc: sim.ballArc });
+      if (sim.ballTrail.length > 8) sim.ballTrail.shift();
+
       if (sim.throwProgress > 0.6) TimeScale.set(0.6, 0.3);
       if (sim.throwProgress >= 1) {
-        // V18: Calculate catch success NOW using actual physics positions
+        // V18: Calculate catch success using actual physics positions at ball arrival
         sim.catchProb = calculateCatchProb(sim.chosenWR, game.passType);
         sim.success = Math.random() * 100 < sim.catchProb;
         if (!sim.success) {
           const intChance = calculateINTChance(sim.chosenWR, game.passType);
           sim.isINT = Math.random() * 100 < intChance;
         }
-        // Calculate yards gained if successful
+        // V18.4: Yards gained = WR's ACTUAL position at catch - LOS (physics-based)
         if (sim.success) {
-          const routeEnd = getRouteEndpoint(currentPlay.offense.wrs[sim.chosenWR]);
-          const rawRouteYards = Math.abs(routeEnd.yard - getLOSYard());
-          sim.routeYards = isShortRoute(currentPlay.offense.wrs[sim.chosenWR].route)
-            ? Math.max(3, rawRouteYards) : Math.max(1, rawRouteYards);
-          // YAC based on actual DB positions
+          const wrCatchYard = sim.wrEntities[sim.chosenWR].yard;
+          const losY = getLOSYard();
+          const catchYards = Math.max(0, wrCatchYard - losY); // actual yards gained from catch point
+
+          // YAC based on actual DB proximity at catch
           let closestDBDist = 999;
           for (let i = 0; i < 4; i++) {
             const db = sim.dbEntities[i];
-            const dist = Math.sqrt(Math.pow(db.yard - sim.wrEntities[sim.chosenWR].yard, 2) + Math.pow(db.lane - sim.wrEntities[sim.chosenWR].lane, 2));
+            const dist = Math.sqrt(Math.pow(db.yard - wrCatchYard, 2) + Math.pow(db.lane - sim.wrEntities[sim.chosenWR].lane, 2));
             if (dist < closestDBDist) closestDBDist = dist;
           }
           const wrSpd = wrs[sim.chosenWR].spd;
@@ -2124,6 +2142,7 @@ function updateSimulation(dt) {
           else { yacYards = 0; sim.yacType = 'immediate_flag'; }
           if (hasRelic('ghost_boots')) yacYards = Math.floor(yacYards * 1.2);
           const maxYards = 50 - game.ballYardLine;
+          sim.routeYards = Math.min(catchYards, maxYards);
           sim.yacYards = Math.min(yacYards, Math.max(0, maxYards - sim.routeYards));
           sim.yardsGained = Math.min(sim.routeYards + sim.yacYards, maxYards);
         }
@@ -2684,19 +2703,34 @@ function drawStarPlayer(x, y, team, action, frame, number, starData) {
 }
 
 function drawBall(x, y, trail) {
+  // V18.4: Ball arc — lob goes high, bullet stays low
+  const arcOffset = (sim && sim.ballArc) ? sim.ballArc * 3 : 0; // pixels upward
   if (trail && trail.length > 1) {
     ctx.save(); ctx.globalAlpha = 0.3; ctx.fillStyle = COL.ball;
     for (let i = 0; i < trail.length; i++) {
       const scr = FIELD.toScreen(trail[i].yard, trail[i].lane);
-      ctx.fillRect(Math.round(scr.x) - 2, Math.round(scr.y) - 1, 4, 2);
+      const tArc = (trail[i].arc || 0) * 3;
+      ctx.fillRect(Math.round(scr.x) - 2, Math.round(scr.y - tArc) - 1, 4, 2);
     }
     ctx.restore();
   }
-  // Pixel art football
+  // V18.4: Ball shadow on ground when arcing
+  if (arcOffset > 3) {
+    ctx.save(); ctx.globalAlpha = 0.2; ctx.fillStyle = '#000';
+    ctx.fillRect(Math.round(x) - 3, Math.round(y) - 1, 6, 2);
+    ctx.restore();
+  }
+  // Pixel art football (elevated by arc)
   ctx.fillStyle = COL.ball;
-  ctx.fillRect(Math.round(x) - 4, Math.round(y) - 2, 8, 4);
+  ctx.fillRect(Math.round(x) - 4, Math.round(y - arcOffset) - 2, 8, 4);
   ctx.fillStyle = COL.ballLace;
-  ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 1);
+  ctx.fillRect(Math.round(x) - 1, Math.round(y - arcOffset) - 1, 2, 1);
+  // Ball size scales slightly with height (lob = ball appears smaller at peak)
+  if (arcOffset > 5) {
+    ctx.save(); ctx.globalAlpha = 0.15; ctx.fillStyle = COL.ball;
+    ctx.fillRect(Math.round(x) - 3, Math.round(y - arcOffset) - 1, 6, 3);
+    ctx.restore();
+  }
 }
 
 function drawRouteLines(alpha, animProgress) {
