@@ -173,9 +173,9 @@ const PHYSICS = {
   DB_MAX_SPEED: 7.5,       // yards/sec — slightly slower than WR
   DB_ACCEL: 4.8,           // yards/sec²
   DB_REACTION_DELAY: 0.15, // seconds — DB reacts to WR movement
-  BALL_SPEED_BULLET: 25,   // yards/sec
-  BALL_SPEED_TOUCH: 18,    // yards/sec
-  BALL_SPEED_LOB: 12,      // yards/sec
+  BALL_SPEED_BULLET: 22,   // yards/sec (~2.7x WR speed, realistic bullet pass)
+  BALL_SPEED_TOUCH: 16,    // yards/sec (~2x WR speed)
+  BALL_SPEED_LOB: 13,      // yards/sec (~1.6x WR speed, slightly faster to prevent overshoot)
   TURN_PENALTY: 0.6,       // speed multiplier when changing direction > 45°
 };
 
@@ -1021,7 +1021,7 @@ const Camera = {
     switch (phase) {
       case 'reading': case 'presnap': case 'choosing': this.targetZoom = 1.0; this.targetX = 0; this.targetY = 0; break;
       case 'motion': this.targetZoom = 1.03; break;
-      case 'throw': this.targetZoom = 1.08; if (sim && sim.wrPos && sim.chosenWR != null) { const ts = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane); this.targetY = (H/2 - ts.y) * 0.3; } break;
+      case 'throw': this.targetZoom = 1.08; if (sim && sim.ballTarget) { const ts = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane); this.targetY = (H/2 - ts.y) * 0.4; this.targetX = (W/2 - ts.x) * 0.2; } break;
       case 'catch': this.targetZoom = 1.12; if (sim && sim.wrPos && sim.chosenWR != null) { const ts = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane); this.targetY = (H/2 - ts.y) * 0.4; } break;
       case 'td': this.tdPulseTimer = 0; break;
       case 'scramble': this.targetZoom = 1.15; break;
@@ -2160,14 +2160,38 @@ function updateSimulation(dt) {
       if (sim.ballTrail.length > 8) sim.ballTrail.shift();
 
       if (sim.throwProgress > 0.6) TimeScale.set(0.6, 0.3);
+      // V18.7: Camera follows ball during flight
+      if (sim.ballPos) {
+        const bscr = FIELD.toScreen(sim.ballPos.yard, sim.ballPos.lane);
+        Camera.targetY = (H/2 - bscr.y) * 0.35;
+        Camera.targetX = (W/2 - bscr.x) * 0.15;
+      }
       if (sim.throwProgress >= 1) {
-        // V18: Calculate catch success using actual physics positions at ball arrival
-        sim.catchProb = calculateCatchProb(sim.chosenWR, game.passType);
-        sim.success = Math.random() * 100 < sim.catchProb;
-        if (!sim.success) {
-          const intChance = calculateINTChance(sim.chosenWR, game.passType);
-          sim.isINT = Math.random() * 100 < intChance;
-        }
+        // V18.7: Check if WR is actually near the ball landing point
+        const wrAtCatch = sim.wrEntities[sim.chosenWR];
+        const wrToBallY = wrAtCatch.yard - sim.ballTarget.yard;
+        const wrToBallL = (wrAtCatch.lane - sim.ballTarget.lane) * 0.42;
+        const wrToBallDist = Math.sqrt(wrToBallY * wrToBallY + wrToBallL * wrToBallL);
+        
+        // WR must be within catchable range (3 yards) of the ball landing point
+        if (wrToBallDist > 3) {
+          // WR too far from ball — overthrown or WR ran past it
+          sim.success = false;
+          sim.isINT = false;
+          sim.catchProb = 0;
+          sim.overthrown = true;
+        } else {
+          // WR is near ball — normal catch calculation
+          // Penalty for not being right at the ball (reaching/diving)
+          const reachPenalty = wrToBallDist > 1.5 ? -15 : wrToBallDist > 0.8 ? -5 : 0;
+          sim.catchProb = calculateCatchProb(sim.chosenWR, game.passType) + reachPenalty;
+          sim.catchProb = Math.max(5, Math.min(95, sim.catchProb));
+          sim.success = Math.random() * 100 < sim.catchProb;
+          if (!sim.success) {
+            const intChance = calculateINTChance(sim.chosenWR, game.passType);
+            sim.isINT = Math.random() * 100 < intChance;
+          }
+        } // end else (WR near ball)
         // V18.4: Yards gained = WR's ACTUAL position at catch - LOS (physics-based)
         if (sim.success) {
           const wrCatchYard = sim.wrEntities[sim.chosenWR].yard;
@@ -2203,6 +2227,7 @@ function updateSimulation(dt) {
         const ws = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane);
         if (sim.success) { addParticle(ws.x, ws.y, 'catch_flash', 12); SFX.play('catch'); }
         else if (sim.isINT) { SFX.play('miss'); Commentary.generate('int'); Camera.setForPhase('incomplete'); }
+        else if (sim.overthrown) { SFX.play('miss'); Commentary.show('传球偏离目标！', 2.5); Camera.setForPhase('incomplete'); }
         else { SFX.play('miss'); Commentary.generate('incomplete'); Camera.setForPhase('incomplete'); }
       }
       break;
