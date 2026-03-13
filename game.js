@@ -854,26 +854,139 @@ function selectDefFormationByTeam() {
 const Commentary = {
   lines: [],
   templates: {
-    presnap_motion_man: ["Motion识别——人盯人防守！调整你的阅读。", "DB跟着走了——确认Man Coverage！"],
-    presnap_motion_zone: ["区域防守！那个缝隙是空的。", "DB没有跟——Zone Coverage。"],
-    bullet_short: ["子弹传球——穿针引线！", "快速出手穿过人群！"],
-    bullet_deep: ["子弹传球打入双人包夹！", "炮弹直飞深区！"],
-    touch_mid: ["漂亮的弧线传球！", "完美螺旋，正中目标！"],
-    lob_deep: ["远射！高弧线炸弹！", "冒险传向双人包夹的深区！"],
-    lob_short: ["高抛到平面区？有意思的选择。", "把球飘到短区..."],
-    big_play: ["{yards}码大爆发！太漂亮了！", "他炸了！{yards}码长传打击！"],
-    td: ["TOUCHDOWN！完美的推进！", "达阵！六分到手！"],
-    int: ["INTERCEPTION！太冒险了！", "被截！回合结束！"],
-    sack: ["SACK！他拿球太久了！", "被擒杀！压力太大了！"],
-    scramble_success: ["他闪开了！翻滚出来！", "躲开了冲传！还活着！"],
-    scramble_fail: ["被从身后抓住了！", "无处可逃！"],
-    scramble_stand: ["在口袋里挺住了！", "不慌——在压力下传球！"],
-    incomplete: ["传球未完成。", "差一点就够到了！"],
-    first_down: ["FIRST DOWN！继续推进！", "新的一组进攻！"],
-    fourth_down: ["第4档...压力来了！", "必须在这里转换！"],
-    audible: ["AUDIBLE！改变战术！", "他看到了什么——新的暗号！"],
-    trust_hot: ["又传给他的最爱目标！", "和#{num}号越来越有默契！"],
-    trust_cold: ["这个接球手状态冰冷——冒险的传球！", "整场比赛都没看他..."],
+    presnap_motion_man: [
+      "Motion识别——人盯人防守！调整你的阅读。", "DB跟着走了——确认Man Coverage！",
+      "看到了！防守跟人了，Man Coverage无疑。", "Motion暴露了防守——盯人！找错位机会。",
+      "DB跟着移动了，人盯人防守确认，看看谁能跑出空间。",
+    ],
+    presnap_motion_zone: [
+      "区域防守！那个缝隙是空的。", "DB没有跟——Zone Coverage。",
+      "Motion没引起反应——区域防守，找缝隙！", "DB站着没动，Zone Coverage，中间会有空间。",
+      "确认区域防守！交叉线路可能撕开防守。",
+    ],
+    bullet_short: [
+      "子弹传球——穿针引线！", "快速出手穿过人群！",
+      "闪电出手！球像导弹一样飞出去！", "教科书级的快速传球！",
+      "果断出手，子弹球直达目标！", "快！狠！准！这就是子弹球！",
+      "毫不犹豫！球出手的一瞬间就到了！",
+    ],
+    bullet_deep: [
+      "子弹传球打入双人包夹！", "炮弹直飞深区！",
+      "大胆！子弹球直接轰向深区！", "用子弹球打深区？这需要钢铁般的手臂！",
+      "火箭弹！直线打深！", "这力量太恐怖了——子弹球30码！",
+    ],
+    touch_mid: [
+      "漂亮的弧线传球！", "完美螺旋，正中目标！",
+      "弧线球出手——画了一道完美的弧线！", "教科书般的Touch Pass！",
+      "球螺旋着飞向目标——漂亮！", "精准的弧线传球，落点完美！",
+      "这提前量判断得太好了！", "弧线传球，球在空中划出优美的轨迹！",
+    ],
+    lob_deep: [
+      "远射！高弧线炸弹！", "冒险传向双人包夹的深区！",
+      "天！高抛炸弹飞向深区！", "把球抛到天上去了！这是赌博式传球！",
+      "高弧线长传——这需要完美的提前量！", "深弹！球在空中挂了好久！",
+      "冒险！高抛传向深区——外接手能跑到吗？",
+    ],
+    lob_short: [
+      "高抛到平面区？有意思的选择。", "把球飘到短区...",
+      "软绵绵的高抛——飘向短区。", "轻柔的高抛球，落在短区。",
+      "有意思的选择——短区高抛。", "飘向Flat区的高抛球。",
+    ],
+    big_play: [
+      "{yards}码大爆发！太漂亮了！", "他炸了！{yards}码长传打击！",
+      "天哪！{yards}码的爆炸性进攻！", "{yards}码！这是本场最精彩的一球！",
+      "一记{yards}码炸弹！防守完全被击穿！", "起飞了！{yards}码长传，全场最佳！",
+      "{yards}码大增益！进攻节奏起来了！",
+    ],
+    td: [
+      "TOUCHDOWN！完美的推进！", "达阵！六分到手！",
+      "TOUCHDOWN！他做到了！冲进端区！", "进了！达阵！全场沸腾！",
+      "漂亮的达阵！这一档的执行完美无缺！", "六分！端区属于进攻方！",
+      "TOUCHDOWN！太精彩了！这就是四分卫的魅力！", "达阵达阵达阵！防守束手无策！",
+      "TD！完美的传球，完美的接球，完美的达阵！", "冲进端区！对手防守完全崩溃！",
+    ],
+    int: [
+      "INTERCEPTION！太冒险了！", "被截！回合结束！",
+      "抄截！防守后卫读懂了四分卫的眼神！", "完了！球被截走了！决策失误！",
+      "被抄截！这个传球太勉强了！", "截了！防守后卫一直在等这个机会！",
+      "致命失误！球直接送到防守手里！", "糟糕的传球被抄截——进攻方丢失球权！",
+    ],
+    sack: [
+      "SACK！他拿球太久了！", "被擒杀！压力太大了！",
+      "Sack！冲传手突破了！拿球太久的代价！", "他在口袋里待太久了——被干倒了！",
+      "擒杀！四分卫还没来得及出手！", "冲传手直冲QB！重重摔在地上！",
+      "Sack！口袋塌了！必须更快出手！", "SACK！这个冲传势不可挡！",
+    ],
+    scramble_success: [
+      "他闪开了！翻滚出来！", "躲开了冲传！还活着！",
+      "漂亮的闪躲！延长了这一档！", "他像泥鳅一样滑了出去！",
+      "逃出了包围！四分卫的移动能力展现！", "闪身避开！冲传手扑了个空！",
+      "好敏捷！成功摆脱了压力！",
+    ],
+    scramble_fail: [
+      "被从身后抓住了！", "无处可逃！",
+      "跑不掉了！被抓住了！", "挣扎了一下但还是倒下了！",
+      "企图闪避——失败了！被按在地上！", "第二个冲传手赶到了——没戏了！",
+    ],
+    scramble_stand: [
+      "在口袋里挺住了！", "不慌——在压力下传球！",
+      "顶住了压力！在冲传中站稳了！", "冰冷的神经！顶着冲传出手！",
+      "钢铁意志！感受到了压力但没有退缩！", "在口袋里硬吃一下——还是把球传出去了！",
+      "勇敢！面对冲传毫不畏惧！",
+    ],
+    incomplete: [
+      "传球未完成。", "差一点就够到了！",
+      "球落在了草地上——未完成。", "接不住！球弹开了！",
+      "手指尖碰到了但没抓稳！", "传球落空——下一档。",
+      "没能完成接球——可惜了！", "球滑出了手——未完成传球。",
+    ],
+    first_down: [
+      "FIRST DOWN！继续推进！", "新的一组进攻！",
+      "首攻到手！进攻还在继续！", "推过了首攻线！重新计算！",
+      "First Down！节奏起来了！", "拿到新的四档机会！保持进攻！",
+      "好球！成功转换首攻！", "首攻！链条在移动——进攻方势不可挡！",
+    ],
+    fourth_down: [
+      "第4档...压力来了！", "必须在这里转换！",
+      "最后一档！成败在此一举！", "第四档——不转换就交权！",
+      "背水一战！第四档全力以赴！", "第四档的压力，全场屏息以待。",
+      "这是必须要成功的一档！", "第四档——展现你的大心脏！",
+    ],
+    audible: [
+      "AUDIBLE！改变战术！", "他看到了什么——新的暗号！",
+      "临阵换战术！四分卫读到了防守的弱点！", "换！新的战术暗号！他看到了什么？",
+      "在起球线上改变战术——聪明的选择！", "Audible！重新调整进攻！",
+    ],
+    trust_hot: [
+      "又传给他的最爱目标！", "和#{num}号越来越有默契！",
+      "这两个人之间的化学反应——太强了！", "默契十足！一个眼神就知道传给谁！",
+      "信任连线！他们之间有心灵感应！",
+    ],
+    trust_cold: [
+      "这个接球手状态冰冷——冒险的传球！", "整场比赛都没看他...",
+      "好久没传给他了——手感还在吗？", "冷板凳上的接球手突然被点名！",
+      "已经很久没碰球了——能接住吗？",
+    ],
+    pressure_throw: [
+      "在压力下出手！球能到位吗？", "冲传逼近——被迫提前传球！",
+      "口袋在塌！赶紧出手！", "感受到了冲传的风——匆忙出手！",
+      "来不及了！顶着压力强行传球！", "冲传手就在身后——紧急出球！",
+    ],
+    clean_pocket: [
+      "口袋干净——从容出手。", "完美保护！有充足时间阅读防守。",
+      "全世界的时间——口袋无压力。", "保护得很好！四分卫舒服地传球。",
+      "像教科书一样——干净的口袋，精准的传球。",
+    ],
+    wide_open_catch: [
+      "完全空位！轻松接球！", "跑出了巨大的空间——没人能阻止他！",
+      "Wide Open！防守去哪了？", "空旷的场地——这球太轻松了！",
+      "整片区域都是空的！白送的接球！",
+    ],
+    contested_catch: [
+      "在夹缝中强行接球！", "顶着防守硬接下来了！",
+      "有人贴着他但还是接住了！太强！", "防守已经到位了——但球还是接住了！",
+      "身体对抗中完成接球！教科书级别的强接！",
+    ],
   },
   generate(key, vars) {
     const pool = this.templates[key];
@@ -2094,6 +2207,9 @@ function updateSimulation(dt) {
       else if (rushDistNow < 5) throwThreshold = 0.6;
       else if (rushDistNow > 8) throwThreshold = 0.85;
       if (sim.routeProgress >= throwThreshold) {
+        // V19.1: Pressure commentary based on rusher distance
+        if (rushDistNow < 4) Commentary.generate('pressure_throw');
+        else if (rushDistNow > 8) Commentary.generate('clean_pocket');
         sim.phase = 'throw'; sim.timer = 0;
         sim.ballPos = { yard: sim.qbPos.yard, lane: sim.qbPos.lane };
         // V18.6: Lead the receiver — throw to where WR WILL BE when ball arrives
@@ -2345,10 +2461,10 @@ function updateSimulation(dt) {
             const cd = Math.sqrt(cdy*cdy + cdl*cdl);
             if (cd < nearDB) nearDB = cd;
           }
-          if (nearDB > 10) Commentary.show(`${wrs[sim.chosenWR].name}完全空位！轻松接球！`, 2.5);
-          else if (nearDB > 5) Commentary.show(`${wrs[sim.chosenWR].name}跑出空间，稳稳接住！+${sim.yardsGained}码`, 2.5);
-          else if (nearDB > 2) Commentary.show(`${wrs[sim.chosenWR].name}在防守夹缝中接球！`, 2.5);
-          else Commentary.show(`强行接球！${wrs[sim.chosenWR].name}在紧贴防守中完成接球！`, 2.5);
+          if (nearDB > 10) Commentary.generate('wide_open_catch');
+          else if (nearDB > 5) Commentary.show(`${wrs[sim.chosenWR].name}跑出空间！+${sim.yardsGained}码`, 2.5);
+          else if (nearDB > 2) Commentary.generate('contested_catch');
+          else Commentary.show(`强行接球！${wrs[sim.chosenWR].name}在紧贴防守中硬接！`, 2.5);
         } else if (sim.isINT) {
           SFX.play('miss'); Camera.setForPhase('incomplete');
           Commentary.show('被抄截！防守读懂了传球意图！', 3);
