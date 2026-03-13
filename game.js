@@ -2737,7 +2737,7 @@ function updateSimulation(dt) {
             PostFX.triggerBloom(1.0); game.highlightTimer = 3.0;
           } else {
             sim.phase = 'result'; sim.timer = 0; TimeScale.set(1, 0);
-            Camera.targetX = 0; Camera.targetY = 0; Camera.targetZoom = 1.0;
+            Camera.lookAt(W/2, H/2); Camera.targetZoom = 1.0;
           }
         }
       }
@@ -2760,7 +2760,7 @@ function updateSimulation(dt) {
       }
       // Camera tracks the WR
       const wrScr = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane);
-      Camera.targetX = W/2 - wrScr.x; Camera.targetY = H/2 - wrScr.y; Camera.targetZoom = 1.2;
+      Camera.lookAt(wrScr.x, wrScr.y); Camera.targetZoom = 1.2;
 
       // Check if YAC complete or DB caught up
       const chaserDist = Math.sqrt(
@@ -2788,7 +2788,7 @@ function updateSimulation(dt) {
             PostFX.triggerBloom(1.0); game.highlightTimer = 3.0;
           } else {
             sim.phase = 'result'; sim.timer = 0; TimeScale.set(1, 0);
-            Camera.targetX = 0; Camera.targetY = 0; Camera.targetZoom = 1.0;
+            Camera.lookAt(W/2, H/2); Camera.targetZoom = 1.0;
           }
         }
       }
@@ -2804,13 +2804,30 @@ function updateSimulation(dt) {
         Replay.startReplay({ x: ws.x, y: ws.y }, game.passType);
       }
       break;
-    case 'replay':
+    case 'replay': {
       Replay.update(dt);
+      // V20.8: Camera tracks action during replay
+      const rFrame = Replay.getFrame();
+      if (rFrame) {
+        if (rFrame.ballPos) {
+          // Track ball
+          const rbs = FIELD.toScreen(rFrame.ballPos.yard, rFrame.ballPos.lane);
+          Camera.lookAt(rbs.x, rbs.y);
+        } else if (rFrame.wrPos && sim.chosenWR != null) {
+          // Track targeted WR
+          const rws = FIELD.toScreen(rFrame.wrPos[sim.chosenWR].yard, rFrame.wrPos[sim.chosenWR].lane);
+          Camera.lookAt(rws.x, rws.y);
+        }
+        // Zoom: wide at start, tight at catch moment
+        const rProg = Replay.getReplayProgress();
+        Camera.targetZoom = Replay.isSlowMoMoment() ? 1.3 : 1.0 + rProg * 0.15;
+      }
       if (!Replay.playing || sim.timer > 4.0) {
         sim.phase = 'result'; sim.timer = 0; TimeScale.set(1, 0);
-        Camera.targetX = 0; Camera.targetY = 0; Camera.targetZoom = 1.0; Replay.playing = false;
+        Camera.lookAt(W/2, H/2); Camera.targetZoom = 1.0; Replay.playing = false;
       }
       break;
+    }
     case 'result':
       sim.resultTimer = Math.min(1, sim.timer / 0.5);
       if (sim.timer > 3.5) handlePlayResult(); break;
@@ -4333,18 +4350,14 @@ function handleClick(e) {
     case 'reading':
       for (const btn of genericButtons) {
         if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
-          if (btn.action === 'audible' && game.audiblesLeft > 0) { game.audiblesLeft--; SFX.play('audible'); audibleAnim.active = true; audibleAnim.timer = 0; Commentary.generate('audible'); Camera.shake(3); generatePlay(currentPlay && currentPlay.isElite, currentPlay && currentPlay.isBoss); game.readingTimer = 0; motionAnimPhase = 'idle'; motionAnimTimer = 0; return; }
-          if (btn.action === 'motion' && !game.motionUsed && motionAnimPhase === 'idle') { motionAnimPhase = 'moving'; motionAnimTimer = 0; motionWROrigLane = currentPlay.offense.wrs[currentPlay.motionWR].lane; SFX.play('motion_slide'); return; }
-          if (btn.action === 'ice_whistle' && hasRelic('ice_whistle') && !game.iceFreezeUsed) { game.iceFreezeUsed = true; game.scoutReport = true; game.filmStudyFloorsLeft = 1; Commentary.show('🧊 冰冻口哨！防守阵型暴露！', 2); return; }
+          // V20.4: Motion/audible/ice buttons removed
         }
       }
       break;
     case 'choosing':
       for (const btn of cardButtons) { if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) { startSimulation(btn.wrIndex); passTypeTimer = 0; return; } }
       break;
-    case 'passType':
-      // V20: passType state no longer used — pass type selected during simulation
-      break;
+    // passType state removed in V20 — pass type selected during live simulation
     case 'simulation':
       // V20: Pass type selection during live simulation
       if (game.waitingForPassType && sim && (sim.phase === 'routes' || sim.phase === 'dropback')) {
@@ -4503,7 +4516,7 @@ function gameLoop(timestamp) {
   game.time += dt; game.animTimer += dt;
   if (game.animTimer > 0.12) { game.animFrame = (game.animFrame + 1) % 8; game.animTimer = 0; }
   updateParticles(dt); updateShake(); Camera.update(dt); Commentary.update(dt); Weather.update(dt);
-  if (game.gameClockRunning && (game.state === 'reading' || game.state === 'choosing' || game.state === 'passType' || game.state === 'simulation' || game.state === 'playResult')) {
+  if (game.gameClockRunning && (game.state === 'reading' || game.state === 'choosing' || game.state === 'simulation' || game.state === 'playResult')) {
     game.gameClock = Math.max(0, game.gameClock - dt);
   }
   ctx.clearRect(0, 0, W, H);
@@ -4515,7 +4528,7 @@ function gameLoop(timestamp) {
       case 'betweenGame': drawBetweenGameScreen(); break;
       case 'reading': drawReadingPhase(dt); break;
       case 'choosing': drawChoosingScreen(); break;
-      case 'passType': drawPassTypeScreen(dt); break;
+      // passType draw removed in V20
       case 'simulation': drawSimulationScreen(dt); drawLivePassTypeOverlay(); break;
       case 'playResult': drawPlayResult(); break;
       case 'upgrade': drawUpgradeScreen(); break;
