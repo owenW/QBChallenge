@@ -1601,6 +1601,19 @@ function getZonePosition(db, t) {
   if (db.role === 'free') return { yard: db.yard + (t.yard - db.yard) * 0.2, lane: db.lane + (t.lane - db.lane) * 0.3 };
   return { yard: db.yard, lane: db.lane };
 }
+// V17.2: Fixed-speed movement — no lerp teleporting
+function moveToward(pos, target, speed) {
+  const dx = target.yard - pos.yard;
+  const dy = target.lane - pos.lane;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < speed) {
+    pos.yard = target.yard;
+    pos.lane = target.lane;
+  } else {
+    pos.yard += (dx / dist) * speed;
+    pos.lane += (dy / dist) * speed;
+  }
+}
 
 function calculateCatchProb(wrIndex, passType) {
   const wr = wrs[wrIndex], score = currentPlay.wrScores[wrIndex], maxScore = Math.max(...currentPlay.wrScores);
@@ -1853,28 +1866,21 @@ function updateSimulation(dt) {
         sim.wrPos[i].lane = fl2 + (path[idx].lane - fl2) * t2;
         sim.wrPos[i].lane = Math.max(2, Math.min(58, sim.wrPos[i].lane)); // V17.1: clamp in-bounds
       }
-      // V17: DB movement speed realism (5B)
+      // V17.2: Fixed-speed DB movement during routes — no lerp, no cheating
+      const DB_SPEED = 0.38;
       for (let i = 0; i < 4; i++) {
         const db = currentPlay.defense.dbs[i];
-        const wrSpd = wrs[sim.chosenWR].spd;
-        // WR base lerp ~0.05 per frame; DB man coverage = 0.85-0.95x WR speed
-        const manLerp = (0.044 + Math.random() * 0.006); // 0.044-0.05 = ~88-100% of WR ~0.05
         if (db.role === 'man' && db.coverIdx >= 0) {
+          // Man: follow assigned WR at fixed speed, trail slightly behind
           const tgt = sim.wrPos[db.coverIdx];
-          sim.dbPos[i].yard += (tgt.yard - sim.dbPos[i].yard) * manLerp;
-          sim.dbPos[i].lane += (tgt.lane - sim.dbPos[i].lane) * manLerp;
-        } else if (db.role === 'zone' || db.role === 'deep' || db.role === 'flat' || db.role === 'free') {
-          // Zone: DB reacts with delay then accelerates toward ball catch point
-          const zoneDelay = sim.routeProgress < 0.4 ? 0.005 : 0.022; // slow reaction, then speeds up
-          const tgt = sim.wrPos[sim.chosenWR];
-          sim.dbPos[i].yard += (tgt.yard - sim.dbPos[i].yard) * zoneDelay;
-          sim.dbPos[i].lane += (tgt.lane - sim.dbPos[i].lane) * (zoneDelay * 0.7);
+          const trailTarget = { yard: tgt.yard - 1.5, lane: tgt.lane };
+          moveToward(sim.dbPos[i], trailTarget, DB_SPEED * 0.92);
         } else {
-          const tgt = sim.wrPos[sim.chosenWR];
-          sim.dbPos[i].yard += (tgt.yard - sim.dbPos[i].yard) * 0.015;
-          sim.dbPos[i].lane += (tgt.lane - sim.dbPos[i].lane) * 0.01;
+          // Zone: hold zone area, do NOT chase the chosen WR (that's cheating)
+          const zoneTarget = { yard: db.yard + 3, lane: db.lane };
+          moveToward(sim.dbPos[i], zoneTarget, DB_SPEED * 0.5);
         }
-        sim.dbPos[i].lane = Math.max(2, Math.min(58, sim.dbPos[i].lane)); // V17.1: clamp in-bounds
+        sim.dbPos[i].lane = Math.max(2, Math.min(58, sim.dbPos[i].lane)); // clamp in-bounds
       }
       const rs = currentPlay.rushFast ? 0.05 : 0.03;
       const sr = hasRelic('quick_release') ? 0.8 : 1;
@@ -1962,18 +1968,11 @@ function updateSimulation(dt) {
         sim.wrPos[i].lane += (end.lane - sim.wrPos[i].lane) * 0.12;
         sim.wrPos[i].lane = Math.max(2, Math.min(58, sim.wrPos[i].lane)); // V17.1: clamp in-bounds
       }
-      // V17.1: DBs continue moving during throw (dont freeze)
+      // V17.2: All DBs react to ball in air — fixed speed toward catch target
+      const DB_SPEED_REACT = 0.42;
       for (let i = 0; i < 4; i++) {
-        const db = currentPlay.defense.dbs[i];
-        if (db.role === "man" && db.coverIdx >= 0) {
-          const tgt = sim.wrPos[db.coverIdx];
-          sim.dbPos[i].yard += (tgt.yard - sim.dbPos[i].yard) * 0.10;
-          sim.dbPos[i].lane += (tgt.lane - sim.dbPos[i].lane) * 0.10;
-        } else {
-          sim.dbPos[i].yard += (sim.ballTarget.yard - sim.dbPos[i].yard) * 0.08;
-          sim.dbPos[i].lane += (sim.ballTarget.lane - sim.dbPos[i].lane) * 0.08;
-        }
-        sim.dbPos[i].lane = Math.max(2, Math.min(58, sim.dbPos[i].lane)); // V17.1: clamp in-bounds
+        moveToward(sim.dbPos[i], sim.ballTarget, DB_SPEED_REACT);
+        sim.dbPos[i].lane = Math.max(2, Math.min(58, sim.dbPos[i].lane));
       }
       // Continuously update ball target to track chosen WR's current position
       sim.ballTarget.yard = sim.wrPos[sim.chosenWR].yard;
@@ -2070,16 +2069,12 @@ function updateSimulation(dt) {
       sim.wrActions[sim.chosenWR] = 'run';
       // Ball tracks WR
       sim.ballPos = { yard: sim.wrPos[sim.chosenWR].yard, lane: sim.wrPos[sim.chosenWR].lane };
-      // DB chaser moves toward WR (slightly slower — 85% of WR speed)
+      // V17.2: DBs chase ball carrier at fixed speed
+      const DB_CHASE_SPEED = 0.40;
       const chaserDB = sim.yacChaserDB;
-      sim.dbPos[chaserDB].yard += (sim.wrPos[sim.chosenWR].yard - sim.dbPos[chaserDB].yard) * 0.085;
-      sim.dbPos[chaserDB].lane += (sim.wrPos[sim.chosenWR].lane - sim.dbPos[chaserDB].lane) * 0.085;
-      // Other DBs move naturally toward ball
       for (let di = 0; di < 4; di++) {
-        if (di !== chaserDB) {
-          sim.dbPos[di].yard += (sim.wrPos[sim.chosenWR].yard - sim.dbPos[di].yard) * 0.03;
-          sim.dbPos[di].lane += (sim.wrPos[sim.chosenWR].lane - sim.dbPos[di].lane) * 0.02;
-        }
+        moveToward(sim.dbPos[di], sim.wrPos[sim.chosenWR], DB_CHASE_SPEED);
+        sim.dbPos[di].lane = Math.max(2, Math.min(58, sim.dbPos[di].lane));
       }
       // Camera tracks the WR
       const wrScr = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane);
