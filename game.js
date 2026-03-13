@@ -1225,7 +1225,7 @@ const Camera = {
     switch (phase) {
       case 'reading': case 'presnap': case 'choosing': this.targetZoom = 1.0; this.targetX = 0; this.targetY = 0; break;
       case 'motion': this.targetZoom = 1.03; break;
-      case 'throw': this.targetZoom = 1.08; if (sim && sim.ballTarget) { const ts = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane); this.targetY = (H/2 - ts.y) * 0.4; this.targetX = (W/2 - ts.x) * 0.2; } break;
+      case 'throw': this.targetZoom = 1.25; if (sim && sim.ballTarget) { const ts = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane); this.targetY = (H/2 - ts.y) * 0.5; this.targetX = (W/2 - ts.x) * 0.3; } break;
       case 'catch': this.targetZoom = 1.12; if (sim && sim.wrPos && sim.chosenWR != null) { const ts = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane); this.targetY = (H/2 - ts.y) * 0.4; } break;
       case 'td': this.tdPulseTimer = 0; break;
       case 'scramble': this.targetZoom = 1.15; break;
@@ -2207,9 +2207,10 @@ function updateSimulation(dt) {
         if (db.reactionTimer > 0) {
           db.reactionTimer -= sd;
         } else if (db.role === 'man' && db.coverIdx >= 0) {
-          // Man: physicsMove toward assigned WR, trailing slightly
+          // V20.2: Man DB tries to stay even with WR (not trailing behind)
+          // DB speed (7.5) vs WR speed (8.0) creates natural separation over time
           const tgt = sim.wrEntities[db.coverIdx];
-          physicsMove(db, tgt.yard - 1.5, tgt.lane, sd);
+          physicsMove(db, tgt.yard, tgt.lane, sd);
         } else {
           // Zone: drop to zone anchor first, then read and react
           const inZone = Math.abs(db.yard - db.zoneAnchorYard) < 2 && Math.abs(db.lane - db.zoneAnchorLane) < 5;
@@ -2229,9 +2230,9 @@ function updateSimulation(dt) {
               }
             }
             if (nearestWRInZone >= 0) {
-              // WR in zone — trail them by 1 yard
+              // V20.2: Zone DB matches WR position (speed difference creates natural gap)
               const tgt = sim.wrEntities[nearestWRInZone];
-              physicsMove(db, tgt.yard - 1, tgt.lane, sd);
+              physicsMove(db, tgt.yard, tgt.lane, sd);
             } else {
               // No WR in zone — help toward nearest uncovered WR
               let helpWR = -1, helpDist = 999;
@@ -2430,14 +2431,21 @@ function updateSimulation(dt) {
           physicsMove(sim.wrEntities[i], end.yard, end.lane, sd);
         }
       }
-      // DBs react to ball with physics
+      // V20.2: DBs react to ball — covering DB stays on WR, others go to ball
       for (let i = 0; i < 4; i++) {
         const db = sim.dbEntities[i];
-        if (!db.hasReacted && (db.role !== 'man' || db.coverIdx !== sim.chosenWR)) {
+        // DB covering the targeted WR: stay on the WR, not the ball
+        const isOnTargetWR = (db.role === 'man' && db.coverIdx === sim.chosenWR);
+        if (isOnTargetWR) {
+          // Chase the WR directly — contest the catch
+          const wrTgt = sim.wrEntities[sim.chosenWR];
+          physicsMove(db, wrTgt.yard, wrTgt.lane, sd);
+        } else if (!db.hasReacted) {
           db.reactionTimer -= sd;
           if (db.reactionTimer <= 0) db.hasReacted = true;
           physicsMove(db, db.yard + 0.5, db.lane, sd);
         } else {
+          // Non-covering DBs break toward ball landing point
           physicsMove(db, sim.ballTarget.yard, sim.ballTarget.lane, sd);
         }
       }
@@ -2457,11 +2465,13 @@ function updateSimulation(dt) {
       if (sim.ballTrail.length > 8) sim.ballTrail.shift();
 
       if (sim.throwProgress > 0.6) TimeScale.set(0.6, 0.3);
-      // V18.7: Camera follows ball during flight
+      // V20.2: Camera tracks ball during flight with zoom
       if (sim.ballPos) {
         const bscr = FIELD.toScreen(sim.ballPos.yard, sim.ballPos.lane);
-        Camera.targetY = (H/2 - bscr.y) * 0.35;
-        Camera.targetX = (W/2 - bscr.x) * 0.15;
+        Camera.targetY = (H/2 - bscr.y) * 0.55;
+        Camera.targetX = (W/2 - bscr.x) * 0.3;
+        // Progressive zoom as ball approaches target
+        Camera.targetZoom = 1.2 + sim.throwProgress * 0.15; // 1.2 → 1.35
       }
       if (sim.throwProgress >= 1) {
         // V18.7: Check if WR is actually near the ball landing point
