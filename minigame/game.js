@@ -3127,22 +3127,22 @@ function drawPoiseRating() {
   const level = getComposureLevel();
   const labels = { cool: '冷静', nervous: '紧张', shaky: '颤抖', tilted: '崩溃' };
   const colors = { cool: COL.uiGreen, nervous: COL.uiYellow, shaky: COL.uiOrange, tilted: COL.uiRed };
-  const px = W - 58, py = 80, col = colors[level];
+  const pw = 64, px = W - pw - 6, py = 80, col = colors[level];
   const poise = 100 - game.stress;
   ctx.save();
-  drawPixelRect(ctx, px - 2, py - 2, 54, 48, COL.cardBg, COL.cardBorder);
+  drawPixelRect(ctx, px - 2, py - 2, pw + 4, 54, COL.cardBg, COL.cardBorder);
   ctx.fillStyle = '#888'; ctx.font = '13px "Courier New"'; ctx.textAlign = 'center';
-  ctx.fillText('POISE', px + 23, py + 7);
+  ctx.fillText('POISE', px + pw/2, py + 7);
   // Bar segments
   for (let s = 0; s < 10; s++) {
     const filled = poise >= (s + 1) * 10;
     const segColor = s < 3 ? COL.uiRed : s < 6 ? COL.uiYellow : COL.uiGreen;
     ctx.fillStyle = filled ? segColor : 'rgba(232,220,200,0.1)';
-    ctx.fillRect(px + s * 5, py + 12, 4, 10);
+    ctx.fillRect(px + 2 + s * 6, py + 15, 5, 10);
   }
   ctx.fillStyle = col; ctx.font = 'bold 13px "Courier New"';
-  ctx.fillText(Math.round(poise), px + 23, py + 34);
-  ctx.font = '15px "Courier New"'; ctx.fillText(labels[level], px + 23, py + 42);
+  ctx.fillText(Math.round(poise), px + pw/2, py + 38);
+  ctx.font = '15px "Courier New"'; ctx.fillText(labels[level], px + pw/2, py + 50);
   ctx.restore();
 }
 
@@ -3675,12 +3675,12 @@ function drawReadingPhase(dt) {
 let cardButtons = [];
 function drawWRCards(interactive) {
   if (!currentPlay) return;
-  const cW = 100, cH = 140, totalW = 4 * cW + 3 * 6, startX = (W - totalW) / 2, baseY = H - cH - 55;
+  const cW = 108, cH = 148, totalW = 4 * cW + 3 * 4, startX = (W - totalW) / 2, baseY = H - cH - 62;
   cardButtons = [];
   for (let i = 0; i < 4; i++) {
     const wr = wrs[i], pw = currentPlay.offense.wrs[i], prob = calculateCatchProb(i, 'touch');
-    const ih = interactive && isInsideRect(mouseX, mouseY, startX + i * (cW + 6), baseY, cW, cH);
-    let cx2 = startX + i * (cW + 6), cy2 = baseY;
+    const ih = interactive && isInsideRect(mouseX, mouseY, startX + i * (cW + 4), baseY, cW, cH);
+    let cx2 = startX + i * (cW + 4), cy2 = baseY;
     if (ih) cy2 -= 8;
     cardButtons.push({ x: cx2, y: cy2, w: cW, h: cH, wrIndex: i });
     const trust = getTrustStatus(i);
@@ -3718,7 +3718,7 @@ function drawWRCards(interactive) {
 
     // Route label
     ctx.fillStyle = 'rgba(232,220,200,0.4)'; ctx.font = '15px "Courier New"'; ctx.textAlign = 'center';
-    ctx.fillText(pw.route.toUpperCase(), cx2 + cW / 2, cy2 + 102);
+    ctx.fillText(pw.route.toUpperCase(), cx2 + cW / 2, cy2 + 104);
 
     // Catch probability
     const pc = prob >= 60 ? COL.uiGreen : prob >= 35 ? COL.uiYellow : COL.uiRed;
@@ -3758,9 +3758,9 @@ function drawChoosingScreen() {
   drawPlayer(qs.x, qs.y, 'offense', 'idle', Math.floor(game.time * 4), 7, true, false, 1.1);
   Camera.endTransform(); Weather.drawParticles(ctx);
 
-  drawPixelRect(ctx, W / 2 - 110, H - 210, 220, 22, COL.cardBg, COL.cardBorder);
+  drawPixelRect(ctx, W / 2 - 120, H - 218, 240, 26, COL.cardBg, COL.cardBorder);
   ctx.fillStyle = COL.uiGold; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'center';
-  ctx.fillText('👇 点击卡牌选择传球目标!', W / 2, H - 196);
+  ctx.fillText('👇 点击卡牌选择传球目标!', W / 2, H - 202);
 
   drawWRCards(true); drawTopBar(); drawPoiseRating(); drawRelicsBar(); drawScoreBug(); drawParticles();
   Commentary.draw(ctx);
