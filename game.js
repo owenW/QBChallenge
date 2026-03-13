@@ -165,6 +165,21 @@ const FIELD = {
 };
 
 // ============================================================
+// PHYSICS CONSTANTS — V18 physics-based simulation engine
+// ============================================================
+const PHYSICS = {
+  WR_MAX_SPEED: 8.0,      // yards/sec — elite WR
+  WR_ACCEL: 5.0,           // yards/sec²
+  DB_MAX_SPEED: 7.5,       // yards/sec — slightly slower than WR
+  DB_ACCEL: 4.8,           // yards/sec²
+  DB_REACTION_DELAY: 0.15, // seconds — DB reacts to WR movement
+  BALL_SPEED_BULLET: 25,   // yards/sec
+  BALL_SPEED_TOUCH: 18,    // yards/sec
+  BALL_SPEED_LOB: 12,      // yards/sec
+  TURN_PENALTY: 0.6,       // speed multiplier when changing direction > 45°
+};
+
+// ============================================================
 // UNIQUE DEFENSIVE TEAMS — 12 teams with star players
 // ============================================================
 const TEAMS = [
@@ -1601,97 +1616,173 @@ function getZonePosition(db, t) {
   if (db.role === 'free') return { yard: db.yard + (t.yard - db.yard) * 0.2, lane: db.lane + (t.lane - db.lane) * 0.3 };
   return { yard: db.yard, lane: db.lane };
 }
-// V17.2: Fixed-speed movement — no lerp teleporting
-function moveToward(pos, target, speed) {
-  const dx = target.yard - pos.yard;
-  const dy = target.lane - pos.lane;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist < speed) {
-    pos.yard = target.yard;
-    pos.lane = target.lane;
-  } else {
-    pos.yard += (dx / dist) * speed;
-    pos.lane += (dy / dist) * speed;
+// V18: Physics-based movement — acceleration, max speed, turn penalty
+function physicsMove(entity, targetYard, targetLane, dt) {
+  // entity must have: yard, lane, vy, vl, maxSpeed, accel
+  const dy = targetYard - entity.yard;
+  const dl = targetLane - entity.lane;
+  const distToTarget = Math.sqrt(dy * dy + dl * dl);
+
+  if (distToTarget < 0.1) {
+    entity.vy *= 0.5; entity.vl *= 0.5; // decelerate when arrived
+    entity.yard += entity.vy * dt;
+    entity.lane += entity.vl * dt;
+    entity.lane = Math.max(2, Math.min(58, entity.lane));
+    return;
   }
+
+  // Direction to target (normalized)
+  const dirY = dy / distToTarget;
+  const dirL = dl / distToTarget;
+
+  // Current speed and direction
+  const currentSpeed = Math.sqrt(entity.vy * entity.vy + entity.vl * entity.vl);
+
+  // Check if we need to change direction significantly
+  let turnPenalty = 1.0;
+  if (currentSpeed > 1.0) {
+    const currentDirY = entity.vy / currentSpeed;
+    const currentDirL = entity.vl / currentSpeed;
+    const dot = currentDirY * dirY + currentDirL * dirL;
+    if (dot < 0.7) turnPenalty = PHYSICS.TURN_PENALTY; // sharp turn = speed loss
+    if (dot < 0) { entity.vy *= 0.3; entity.vl *= 0.3; } // reversing = hard brake
+  }
+
+  // Accelerate toward target
+  entity.vy += dirY * entity.accel * dt;
+  entity.vl += dirL * entity.accel * dt;
+
+  // Clamp to max speed (with turn penalty)
+  const effectiveMax = entity.maxSpeed * turnPenalty;
+  const newSpeed = Math.sqrt(entity.vy * entity.vy + entity.vl * entity.vl);
+  if (newSpeed > effectiveMax) {
+    const scale = effectiveMax / newSpeed;
+    entity.vy *= scale;
+    entity.vl *= scale;
+  }
+
+  // Apply velocity
+  entity.yard += entity.vy * dt;
+  entity.lane += entity.vl * dt;
+
+  // Clamp in bounds
+  entity.lane = Math.max(2, Math.min(58, entity.lane));
 }
 
-function calculateCatchProb(wrIndex, passType) {
-  const wr = wrs[wrIndex], score = currentPlay.wrScores[wrIndex], maxScore = Math.max(...currentPlay.wrScores);
-  let prob = 40;
-  if (wrIndex === currentPlay.bestWR) prob += 35;
-  else prob += Math.max(0, 20 * (score / Math.max(1, maxScore)));
-  prob += (qb.accuracy - 60) * 0.3; prob += (wr.cat - 50) * 0.2; prob += getComposureAccuracyMod();
-
-  // Golden armguard relic
-  if (hasRelic('golden_armguard')) prob += 15;
-
-  const routeEnd = getRouteEndpoint(currentPlay.offense.wrs[wrIndex]);
-  const throwDist = Math.abs(routeEnd.yard - getLOSYard());
-  if (throwDist > 12) { prob += (qb.arm - 60) * 0.3; if (hasRelic('golden_arm')) prob += 15; if (game.weatherDebuff) prob -= game.weatherDebuff; }
-  const syns = checkSynergies(wrIndex);
-  for (const s of syns) if (s.bonus.catchBonus) prob += s.bonus.catchBonus;
-  if (hasRelic('hot_hand') && consecutiveCatches > 0) prob += Math.min(consecutiveCatches * 5, 20);
-  if (hasRelic('iron_will') && game.downs.current === 4) prob += 20;
-  if (game.downs.current === 4) prob += 5;
-  if (getComposureLevel() === 'tilted' && Math.random() < 0.1) prob -= 30;
+// V18: Physics-based catch probability — ACTUAL positions are the dominant factor
+function calculateCatchProb(wrIdx, passType) {
+  if (!sim) return 50;
+  const wrPos = sim.wrEntities[wrIdx];
+  const pt = passType || game.passType;
+  const route = currentPlay.offense.wrs[wrIdx].route;
+  const wr = wrs[wrIdx];
 
   // Chain lightning: 3 consecutive = auto complete
   if (hasRelic('chain_lightning') && consecutiveCatches >= 3) return 99;
 
-  // Gambler coin
-  if (hasRelic('gambler_coin')) { prob += Math.random() < 0.5 ? 30 : -20; }
+  // Base catch probability from WR catch stat
+  let prob = 40 + wr.cat * 0.4; // base 62-68% for cat 55-70
 
-  // Football heart comeback mechanic
+  // DISTANCE IS KING — find closest DB using actual physics positions
+  let closestDB = 999;
+  for (let i = 0; i < 4; i++) {
+    const db = sim.dbEntities[i];
+    const dist = Math.sqrt(Math.pow(db.yard - wrPos.yard, 2) + Math.pow(db.lane - wrPos.lane, 2));
+    if (dist < closestDB) closestDB = dist;
+  }
+
+  if (closestDB > 10) prob += 30;       // wide open — near-automatic
+  else if (closestDB > 7) prob += 20;   // very open
+  else if (closestDB > 5) prob += 12;   // good separation
+  else if (closestDB > 3) prob += 5;    // slight advantage
+  else if (closestDB > 1.5) prob -= 5;  // contested
+  else prob -= 20;                       // blanketed — very hard catch
+
+  // QB accuracy
+  prob += (qb.accuracy - 70) * 0.3;
+
+  // Pass type modifiers
+  if (pt === 'bullet') {
+    prob += 3; // quick delivery
+    if (isDeepRoute(route)) prob -= 22; // can't rifle a bullet 20 yards accurately
+    if (currentPlay.coverageIsMan) prob -= 5;
+  } else if (pt === 'lob') {
+    prob -= 5; // more time for DB to arrive
+    if (isDeepRoute(route)) prob += 10;
+    if (isShortRoute(route)) prob -= 7;
+  }
+
+  // Relics
+  if (hasRelic('golden_armguard')) prob += 15;
+  if (hasRelic('hot_hand') && consecutiveCatches > 0) prob += Math.min(consecutiveCatches * 5, 20);
+  if (hasRelic('iron_will') && game.downs.current === 4) prob += 20;
+  if (game.downs.current === 4) prob += 5;
+  if (hasRelic('gambler_coin')) { prob += Math.random() < 0.5 ? 30 : -20; }
   if (hasRelic('football_heart') && game.gameScore.opponent - game.gameScore.player >= 14) prob += 25;
 
+  // Deep route arm/weather
+  const throwDist = Math.abs(getRouteEndpoint(currentPlay.offense.wrs[wrIdx]).yard - getLOSYard());
+  if (throwDist > 12) { prob += (qb.arm - 60) * 0.3; if (hasRelic('golden_arm')) prob += 15; }
+
+  // Composure and trust
+  prob += getComposureAccuracyMod();
+  if (getComposureLevel() === 'tilted' && Math.random() < 0.1) prob -= 30;
+  const isClutchDown = game.downs.current >= 3;
+  prob += getTrustCatchMod(wrIdx, isClutchDown);
+
+  // Motion system
   if (game.motionUsed && game.motionResult) {
-    if (game.motionResult === 'man' && wrIndex !== game.motionWRIndex) prob += 8;
-    else if (game.motionResult === 'zone' && wrIndex === game.motionWRIndex) prob += 12;
-    else if (game.motionResult === 'man' && wrIndex === game.motionWRIndex) prob -= 8;
+    if (game.motionResult === 'man' && wrIdx !== game.motionWRIndex) prob += 8;
+    else if (game.motionResult === 'zone' && wrIdx === game.motionWRIndex) prob += 12;
+    else if (game.motionResult === 'man' && wrIdx === game.motionWRIndex) prob -= 8;
   }
-  const pt = passType || game.passType;
-  const route = currentPlay.offense.wrs[wrIndex].route;
-  // V15: Bullet-to-deep penalty increased — you can't throw a bullet 20 yards downfield accurately
-  if (pt === 'bullet') { if (isShortRoute(route)) prob += 12; if (isDeepRoute(route)) prob -= 25; if (currentPlay.coverageIsMan) prob -= 5; }
-  else if (pt === 'lob') { if (isDeepRoute(route)) prob += 15; if (isShortRoute(route)) prob -= 12; }
+
+  // Synergies
+  const syns = checkSynergies(wrIdx);
+  for (const s of syns) if (s.bonus.catchBonus) prob += s.bonus.catchBonus;
+
+  // Weather and scramble
+  prob -= Weather.getCatchDebuff();
   if (game.scrambleResult === 'dodged') prob -= 15;
   if (game.scrambleResult === 'stand_tall') prob -= 25;
-  prob -= Weather.getCatchDebuff();
-  const isClutchDown = game.downs.current >= 3;
-  prob += getTrustCatchMod(wrIndex, isClutchDown);
-
-  // V17: Visual-mechanical consistency (5C) — factor in actual DB visual distance
-  if (sim && sim.dbPos) {
-    const wrTarget = getRouteEndpoint(currentPlay.offense.wrs[wrIndex]);
-    let nearestDBVisualDist = Infinity;
-    for (let di = 0; di < sim.dbPos.length; di++) {
-      const dy = sim.dbPos[di].yard - wrTarget.yard;
-      const dl = sim.dbPos[di].lane - wrTarget.lane;
-      const dist = Math.sqrt(dy * dy + dl * dl);
-      if (dist < nearestDBVisualDist) nearestDBVisualDist = dist;
-    }
-    if (nearestDBVisualDist > 10) prob += 25;       // wide open
-    else if (nearestDBVisualDist > 5) prob += 12;   // open
-    else if (nearestDBVisualDist < 1.5) prob -= 20; // locked down
-    else if (nearestDBVisualDist < 3) prob -= 12;   // tight coverage
-  }
 
   return Math.max(5, Math.min(95, prob));
 }
 
-function calculateINTChance(wrIndex, passType) {
-  let intChance = 3;
+// V18: Physics-based INT chance — uses actual DB proximity
+function calculateINTChance(wrIdx, passType) {
+  if (!sim) return 3;
+  const wrPos = sim.wrEntities[wrIdx];
   const pt = passType || game.passType;
+
+  let closestDB = 999;
+  for (let i = 0; i < 4; i++) {
+    const db = sim.dbEntities[i];
+    const dist = Math.sqrt(Math.pow(db.yard - wrPos.yard, 2) + Math.pow(db.lane - wrPos.lane, 2));
+    if (dist < closestDB) closestDB = dist;
+  }
+
+  let chance = 3; // base 3%
+  if (closestDB < 1.5) chance = 18;      // DB right on top = high INT chance
+  else if (closestDB < 3) chance = 10;   // contested
+  else if (closestDB < 5) chance = 5;
+  else chance = 2;                        // open = very unlikely INT
+
+  if (pt === 'lob') chance += 5;    // lob gives DB time to read
+  if (pt === 'bullet') chance -= 2; // quick delivery limits INT windows
+
+  // Keep gameplay modifiers
+  if (pt === 'bullet' && currentPlay.coverageIsMan) chance += 3;
+  if (game.scrambleResult === 'dodged') chance += 4;
+  if (game.scrambleResult === 'stand_tall') chance += 2;
+  if (getComposureLevel() === 'tilted') chance += 5;
+  if (getComposureLevel() === 'shaky') chance += 2;
+
+  // Team INT bonus
   const team = getCurrentTeam();
-  if (pt === 'lob') intChance += 5;
-  if (pt === 'bullet' && currentPlay.coverageIsMan) intChance += 3;
-  if (game.scrambleResult === 'dodged') intChance += 4;
-  if (game.scrambleResult === 'stand_tall') intChance += 2;
-  if (getComposureLevel() === 'tilted') intChance += 5;
-  if (getComposureLevel() === 'shaky') intChance += 2;
-  // Shadow Hawks deep INT bonus
-  if (team.deepIntMod && isDeepRoute(currentPlay.offense.wrs[wrIndex].route)) intChance *= team.deepIntMod;
-  return intChance;
+  if (team.deepIntMod && isDeepRoute(currentPlay.offense.wrs[wrIdx].route)) chance *= team.deepIntMod;
+
+  return Math.max(1, Math.min(30, chance));
 }
 
 // ============================================================
@@ -1713,12 +1804,47 @@ function startSimulation(chosenWR) {
   let willSack = play.rushFast && Math.random() < (0.20 * rushFactor * armMod);
   if (team.rushChargeUp) willSack = false; // Giant Front: sack only if play takes >3s
 
+  // V18: Physics entities for all players
+  const wrEntities = play.offense.wrs.map((w, i) => ({
+    yard: w.yard, lane: w.lane,
+    vy: 0, vl: 0,
+    maxSpeed: PHYSICS.WR_MAX_SPEED * (0.92 + wrs[i].spd * 0.0013), // spd stat affects max speed
+    accel: PHYSICS.WR_ACCEL,
+  }));
+  const dbEntities = play.defense.dbs.map(db => ({
+    yard: db.yard, lane: db.lane,
+    vy: 0, vl: 0,
+    maxSpeed: PHYSICS.DB_MAX_SPEED,
+    accel: PHYSICS.DB_ACCEL,
+    role: db.role,
+    coverIdx: db.coverIdx !== undefined ? db.coverIdx : -1,
+    reactionTimer: db.role === 'man' ? 0.05 : PHYSICS.DB_REACTION_DELAY,
+    hasReacted: false,
+    zoneAnchorYard: db.yard + 3, // zone: drift 3 yards forward from start
+    zoneAnchorLane: db.lane,
+  }));
+  const rushEntity = {
+    yard: play.defense.rusher.yard, lane: play.defense.rusher.lane,
+    vy: 0, vl: 0,
+    maxSpeed: play.rushFast ? 7.0 : 5.5,
+    accel: 4.0,
+  };
+  const qbEntity = {
+    yard: play.offense.qb.yard, lane: play.offense.qb.lane,
+    vy: 0, vl: 0, maxSpeed: 5.0, accel: 3.5,
+  };
+
   sim = {
     phase: 'snap', timer: 0, chosenWR, success: false, catchProb: 0, yardsGained: 0,
-    wrPos: play.offense.wrs.map(w => ({ yard: w.yard, lane: w.lane })),
-    dbPos: play.defense.dbs.map(db => ({ yard: db.yard, lane: db.lane })),
-    rushPos: { yard: play.defense.rusher.yard, lane: play.defense.rusher.lane },
-    qbPos: { yard: play.offense.qb.yard, lane: play.offense.qb.lane },
+    routeYards: 0, yacYards: 0, outcomeDecided: false,
+    // V18: Physics entities (primary source of truth)
+    wrEntities, dbEntities,
+    rushEntity, qbEntity,
+    // wrPos/dbPos/rushPos/qbPos are aliases for backwards compatibility with drawing code
+    wrPos: wrEntities,
+    dbPos: dbEntities,
+    rushPos: rushEntity,
+    qbPos: qbEntity,
     qbStartYard: play.offense.qb.yard,
     ballPos: null, ballTarget: null, ballTrail: [],
     routeProgress: 0, throwProgress: 0, snapProgress: 0, catchAnim: 0, resultTimer: 0,
@@ -1731,7 +1857,7 @@ function startSimulation(chosenWR) {
     tdCelebrating: false, tdTimer: 0,
     rusherSide: play.rusherSide || 'center',
     chargeUpTimer: 0, // for Giant Front
-    // V17: YAC phase fields
+    // YAC phase fields
     yacTimer: 0, yacDuration: 0, yacStartYard: 0, yacStartLane: 0,
     yacTargetYard: 0, yacTargetLane: 0, yacChaserDB: 0,
   };
@@ -1740,89 +1866,10 @@ function startSimulation(chosenWR) {
   SFX.play('snap'); TimeScale.set(1, 0); Camera.setForPhase('reading');
 }
 
+// V18: No longer calculates success here — outcome determined at throw completion using actual positions
 function beginSimAfterPassType() {
   if (!sim) return;
-  const play = currentPlay, routeEnd = getRouteEndpoint(play.offense.wrs[sim.chosenWR]);
-  sim.catchProb = calculateCatchProb(sim.chosenWR, game.passType);
-  sim.success = Math.random() * 100 < sim.catchProb;
-  const intChance = calculateINTChance(sim.chosenWR, game.passType);
-  if (!sim.success && Math.random() * 100 < intChance) sim.isINT = true;
-  if (sim.success) {
-    // V15: Base yards = route depth from LOS, with minimum for short routes
-    // In flag football, even a flat route catch gives you 3-4 yards minimum
-    const rawRouteYards = Math.abs(routeEnd.yard - getLOSYard());
-    const routeYards = isShortRoute(currentPlay.offense.wrs[sim.chosenWR].route) 
-      ? Math.max(3, rawRouteYards) // Short routes: minimum 3 yards (catch + forward momentum)
-      : Math.max(1, rawRouteYards);
-    
-    // YAC (Yards After Catch) - flag football style
-    // Calculate where each DB will be when the ball arrives at the catch point
-    const catchYard = routeEnd.yard;
-    const catchLane = routeEnd.lane;
-    const throwTime = game.passType === 'bullet' ? 0.4 : game.passType === 'lob' ? 0.7 : 0.55;
-    
-    let closestDBDist = 999;
-    for (const db of currentPlay.defense.dbs) {
-      // DB moves toward catch point during throw flight
-      let dbFinalYard, dbFinalLane;
-      if (db.role === 'man' && db.coverIdx === sim.chosenWR) {
-        // Man coverage DB trails the WR closely
-        dbFinalYard = catchYard + 1; // 1 yard behind WR
-        dbFinalLane = catchLane + (Math.random() * 4 - 2);
-      } else if (db.role === 'zone') {
-        // Zone DB reacts to throw, moves toward catch point
-        dbFinalYard = db.yard + (catchYard - db.yard) * 0.6;
-        dbFinalLane = db.lane + (catchLane - db.lane) * 0.4;
-      } else {
-        // Default: DB moves partially toward catch
-        dbFinalYard = db.yard + (catchYard - db.yard) * 0.5;
-        dbFinalLane = db.lane + (catchLane - db.lane) * 0.3;
-      }
-      const dist = Math.sqrt(Math.pow(dbFinalYard - catchYard, 2) + Math.pow(dbFinalLane - catchLane, 2));
-      if (dist < closestDBDist) closestDBDist = dist;
-    }
-    
-    // YAC calculation — realistic for flag football (45-yard field)
-    let yacYards = 0;
-    const wrSpd = wrs[sim.chosenWR].spd;
-    const spdBonus = Math.max(0, Math.floor((wrSpd - 65) / 10)); // 0-3 bonus yards for speed
-    
-    if (closestDBDist > 12) {
-      // Truly wide open — breakaway, but capped for 45-yard field
-      yacYards = 8 + Math.floor(Math.random() * 8) + spdBonus;
-      sim.yacType = 'wide_open';
-    } else if (closestDBDist > 6) {
-      // Some room — decent YAC before flag pull
-      yacYards = 3 + Math.floor(Math.random() * 5) + spdBonus;
-      sim.yacType = 'room_to_run';
-    } else if (closestDBDist > 3) {
-      // Defender close — quick flag pull
-      yacYards = 1 + Math.floor(Math.random() * 3);
-      sim.yacType = 'flag_pull';
-    } else {
-      // Defender right there — immediate flag
-      yacYards = 0;
-      sim.yacType = 'immediate_flag';
-    }
-    
-    // V15: Short routes in flag football CAN get big YAC if caught in space
-    // Only reduce YAC on short routes if a defender is very close (< 4 yards)
-    // In real 5v5 flag football, a drag or flat caught in open space = touchdown potential
-    if (isShortRoute(currentPlay.offense.wrs[sim.chosenWR].route)) {
-      if (closestDBDist < 4) yacYards = Math.min(yacYards, 2); // Tight coverage = immediate flag
-      else if (closestDBDist < 6) yacYards = Math.min(yacYards, 5); // Moderate space
-      // If closestDBDist >= 6, don't cap — WR has room to run
-    }
-    
-    // Ghost boots relic
-    if (hasRelic('ghost_boots')) yacYards = Math.floor(yacYards * 1.2);
-    
-    // Cap total yards to remaining field (can't run past end zone)
-    const maxYards = 50 - game.ballYardLine;
-    sim.yardsGained = Math.min(routeYards + yacYards, maxYards);
-    sim.yacYards = Math.min(yacYards, Math.max(0, maxYards - routeYards));
-    sim.routeYards = routeYards;
-  }
+  // Just start the throw animation — success/failure calculated when ball arrives (throw phase end)
   game.state = 'simulation';
   const cl = getComposureLevel();
   if (cl === 'nervous') triggerShake(2); else if (cl === 'shaky') triggerShake(4); else if (cl === 'tilted') triggerShake(8);
@@ -1853,34 +1900,33 @@ function updateSimulation(dt) {
     case 'dropback':
       sim.qbPos.yard += (sim.qbStartYard - 3 - sim.qbPos.yard) * 0.08; sim.qbAction = 'run';
       if (sim.timer > 0.4) { sim.phase = 'routes'; sim.timer = 0; sim.wrActions = ['run','run','run','run']; sim.defActions = ['run','run','run','run']; } break;
-    case 'routes':
+    case 'routes': {
       sim.routeProgress = Math.min(1, sim.timer / 1.2); sim.qbAction = 'idle';
       Camera.setForPhase('choosing');
+      // V18: WRs use physicsMove toward their route path target
       for (let i = 0; i < 4; i++) {
         const wr = currentPlay.offense.wrs[i], path = routePaths[wr.route](wr.yard, wr.lane);
         const total = path.length, seg = sim.routeProgress * total;
         const idx = Math.min(Math.floor(seg), total - 1), t2 = seg - idx;
         const fy = idx === 0 ? wr.yard : path[idx - 1].yard;
         const fl2 = idx === 0 ? wr.lane : path[idx - 1].lane;
-        sim.wrPos[i].yard = fy + (path[idx].yard - fy) * t2;
-        sim.wrPos[i].lane = fl2 + (path[idx].lane - fl2) * t2;
-        sim.wrPos[i].lane = Math.max(2, Math.min(58, sim.wrPos[i].lane)); // V17.1: clamp in-bounds
+        const targetYard = fy + (path[idx].yard - fy) * t2;
+        const targetLane = fl2 + (path[idx].lane - fl2) * t2;
+        physicsMove(sim.wrEntities[i], targetYard, targetLane, sd);
       }
-      // V17.2: Fixed-speed DB movement during routes — no lerp, no cheating
-      const DB_SPEED = 0.38;
+      // V18: Physics-based DB movement — man reacts with delay, zone holds anchor
       for (let i = 0; i < 4; i++) {
-        const db = currentPlay.defense.dbs[i];
-        if (db.role === 'man' && db.coverIdx >= 0) {
-          // Man: follow assigned WR at fixed speed, trail slightly behind
-          const tgt = sim.wrPos[db.coverIdx];
-          const trailTarget = { yard: tgt.yard - 1.5, lane: tgt.lane };
-          moveToward(sim.dbPos[i], trailTarget, DB_SPEED * 0.92);
+        const db = sim.dbEntities[i];
+        if (db.reactionTimer > 0) {
+          db.reactionTimer -= sd;
+        } else if (db.role === 'man' && db.coverIdx >= 0) {
+          // Man: physicsMove toward assigned WR, trailing slightly
+          const tgt = sim.wrEntities[db.coverIdx];
+          physicsMove(db, tgt.yard - 1.5, tgt.lane, sd);
         } else {
-          // Zone: hold zone area, do NOT chase the chosen WR (that's cheating)
-          const zoneTarget = { yard: db.yard + 3, lane: db.lane };
-          moveToward(sim.dbPos[i], zoneTarget, DB_SPEED * 0.5);
+          // Zone: physicsMove toward zone anchor, do NOT chase any specific WR
+          physicsMove(db, db.zoneAnchorYard, db.zoneAnchorLane, sd);
         }
-        sim.dbPos[i].lane = Math.max(2, Math.min(58, sim.dbPos[i].lane)); // clamp in-bounds
       }
       const rs = currentPlay.rushFast ? 0.05 : 0.03;
       const sr = hasRelic('quick_release') ? 0.8 : 1;
@@ -1891,12 +1937,12 @@ function updateSimulation(dt) {
       sim.rushPos.lane += (rushTargetLane - sim.rushPos.lane) * rs * sr;
 
       // Giant Front charge-up
-      const team = getCurrentTeam();
-      if (team.rushChargeUp) {
+      const teamR = getCurrentTeam();
+      if (teamR.rushChargeUp) {
         sim.chargeUpTimer += sd;
-        if (sim.chargeUpTimer >= team.chargeUpTime && !sim.scrambleTriggered) {
+        if (sim.chargeUpTimer >= teamR.chargeUpTime && !sim.scrambleTriggered) {
           sim.willSack = true;
-          Commentary.teamComment(team, 'sack');
+          Commentary.teamComment(teamR, 'sack');
         }
       }
 
@@ -1908,11 +1954,19 @@ function updateSimulation(dt) {
       if (sim.routeProgress >= 0.7) {
         sim.phase = 'throw'; sim.timer = 0;
         sim.ballPos = { yard: sim.qbPos.yard, lane: sim.qbPos.lane };
-        sim.ballTarget = { yard: sim.wrPos[sim.chosenWR].yard, lane: sim.wrPos[sim.chosenWR].lane };
+        sim.ballTarget = { yard: sim.wrEntities[sim.chosenWR].yard, lane: sim.wrEntities[sim.chosenWR].lane };
         sim.qbAction = 'throw'; sim.wrActions[sim.chosenWR] = 'catch';
         sim.throwPowerTimer = 0.3; TimeScale.set(0.65, 0.5); Camera.setForPhase('throw');
+        // Reset zone DB reaction timers so they react fresh to the throw
+        for (let i = 0; i < 4; i++) {
+          if (sim.dbEntities[i].role !== 'man') {
+            sim.dbEntities[i].reactionTimer = PHYSICS.DB_REACTION_DELAY;
+            sim.dbEntities[i].hasReacted = false;
+          }
+        }
       }
       break;
+    }
     case 'scramble':
       sim.scrambleTimer -= sd;
       sim.rushPos.yard += (sim.qbPos.yard - sim.rushPos.yard) * 0.12;
@@ -1960,19 +2014,24 @@ function updateSimulation(dt) {
       const throwDuration = game.passType === 'bullet' ? 0.4 : game.passType === 'lob' ? 0.7 : 0.55;
       sim.throwProgress = Math.min(1, sim.timer / throwDuration);
       sim.throwPowerTimer -= sd;
-      // Update WR positions first so ball tracks to current WR position
+      // V18: WRs continue running routes using physics
       for (let i = 0; i < 4; i++) {
         const path = routePaths[currentPlay.offense.wrs[i].route](currentPlay.offense.wrs[i].yard, currentPlay.offense.wrs[i].lane);
         const end = path[path.length - 1];
-        sim.wrPos[i].yard += (end.yard - sim.wrPos[i].yard) * 0.12; // V17.1: faster lerp (was 0.05)
-        sim.wrPos[i].lane += (end.lane - sim.wrPos[i].lane) * 0.12;
-        sim.wrPos[i].lane = Math.max(2, Math.min(58, sim.wrPos[i].lane)); // V17.1: clamp in-bounds
+        physicsMove(sim.wrEntities[i], end.yard, end.lane, sd);
       }
-      // V17.2: All DBs react to ball in air — fixed speed toward catch target
-      const DB_SPEED_REACT = 0.42;
+      // V18: All DBs react to ball — physicsMove toward catch target at realistic speed
       for (let i = 0; i < 4; i++) {
-        moveToward(sim.dbPos[i], sim.ballTarget, DB_SPEED_REACT);
-        sim.dbPos[i].lane = Math.max(2, Math.min(58, sim.dbPos[i].lane));
+        const db = sim.dbEntities[i];
+        // Zone DBs have brief reaction delay before chasing ball
+        if (!db.hasReacted && (db.role !== 'man' || db.coverIdx !== sim.chosenWR)) {
+          db.reactionTimer -= sd;
+          if (db.reactionTimer <= 0) db.hasReacted = true;
+          // Still use physicsMove toward current position (hold/drift)
+          physicsMove(db, db.yard + 0.5, db.lane, sd);
+        } else {
+          physicsMove(db, sim.ballTarget.yard, sim.ballTarget.lane, sd);
+        }
       }
       // Continuously update ball target to track chosen WR's current position
       sim.ballTarget.yard = sim.wrPos[sim.chosenWR].yard;
@@ -1982,6 +2041,38 @@ function updateSimulation(dt) {
       sim.ballTrail.push({ ...sim.ballPos }); if (sim.ballTrail.length > 8) sim.ballTrail.shift();
       if (sim.throwProgress > 0.6) TimeScale.set(0.6, 0.3);
       if (sim.throwProgress >= 1) {
+        // V18: Calculate catch success NOW using actual physics positions
+        sim.catchProb = calculateCatchProb(sim.chosenWR, game.passType);
+        sim.success = Math.random() * 100 < sim.catchProb;
+        if (!sim.success) {
+          const intChance = calculateINTChance(sim.chosenWR, game.passType);
+          sim.isINT = Math.random() * 100 < intChance;
+        }
+        // Calculate yards gained if successful
+        if (sim.success) {
+          const routeEnd = getRouteEndpoint(currentPlay.offense.wrs[sim.chosenWR]);
+          const rawRouteYards = Math.abs(routeEnd.yard - getLOSYard());
+          sim.routeYards = isShortRoute(currentPlay.offense.wrs[sim.chosenWR].route)
+            ? Math.max(3, rawRouteYards) : Math.max(1, rawRouteYards);
+          // YAC based on actual DB positions
+          let closestDBDist = 999;
+          for (let i = 0; i < 4; i++) {
+            const db = sim.dbEntities[i];
+            const dist = Math.sqrt(Math.pow(db.yard - sim.wrEntities[sim.chosenWR].yard, 2) + Math.pow(db.lane - sim.wrEntities[sim.chosenWR].lane, 2));
+            if (dist < closestDBDist) closestDBDist = dist;
+          }
+          const wrSpd = wrs[sim.chosenWR].spd;
+          const spdBonus = Math.max(0, Math.floor((wrSpd - 65) / 10));
+          let yacYards = 0;
+          if (closestDBDist > 12) { yacYards = 8 + Math.floor(Math.random() * 8) + spdBonus; sim.yacType = 'wide_open'; }
+          else if (closestDBDist > 6) { yacYards = 3 + Math.floor(Math.random() * 5) + spdBonus; sim.yacType = 'room_to_run'; }
+          else if (closestDBDist > 3) { yacYards = 1 + Math.floor(Math.random() * 3); sim.yacType = 'flag_pull'; }
+          else { yacYards = 0; sim.yacType = 'immediate_flag'; }
+          if (hasRelic('ghost_boots')) yacYards = Math.floor(yacYards * 1.2);
+          const maxYards = 50 - game.ballYardLine;
+          sim.yacYards = Math.min(yacYards, Math.max(0, maxYards - sim.routeYards));
+          sim.yardsGained = Math.min(sim.routeYards + sim.yacYards, maxYards);
+        }
         sim.phase = 'catch'; sim.timer = 0; TimeScale.set(0.5, 0.3);
         Camera.setForPhase('catch');
         const ws = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane);
@@ -2069,12 +2160,10 @@ function updateSimulation(dt) {
       sim.wrActions[sim.chosenWR] = 'run';
       // Ball tracks WR
       sim.ballPos = { yard: sim.wrPos[sim.chosenWR].yard, lane: sim.wrPos[sim.chosenWR].lane };
-      // V17.2: DBs chase ball carrier at fixed speed
-      const DB_CHASE_SPEED = 0.40;
+      // V18: DBs chase ball carrier using physics
       const chaserDB = sim.yacChaserDB;
       for (let di = 0; di < 4; di++) {
-        moveToward(sim.dbPos[di], sim.wrPos[sim.chosenWR], DB_CHASE_SPEED);
-        sim.dbPos[di].lane = Math.max(2, Math.min(58, sim.dbPos[di].lane));
+        physicsMove(sim.dbEntities[di], sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane, sd);
       }
       // Camera tracks the WR
       const wrScr = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane);
