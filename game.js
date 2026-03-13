@@ -1001,8 +1001,8 @@ const Camera = {
     switch (phase) {
       case 'reading': case 'presnap': case 'choosing': this.targetZoom = 1.0; this.targetX = 0; this.targetY = 0; break;
       case 'motion': this.targetZoom = 1.03; break;
-      case 'throw': this.targetZoom = 1.1; break;
-      case 'catch': this.targetZoom = 1.2; break;
+      case 'throw': this.targetZoom = 1.08; if (sim && sim.wrPos && sim.chosenWR != null) { const ts = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane); this.targetY = (H/2 - ts.y) * 0.3; } break;
+      case 'catch': this.targetZoom = 1.12; if (sim && sim.wrPos && sim.chosenWR != null) { const ts = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane); this.targetY = (H/2 - ts.y) * 0.4; } break;
       case 'td': this.tdPulseTimer = 0; break;
       case 'scramble': this.targetZoom = 1.15; break;
       case 'sack': case 'incomplete': this.shake(6); break;
@@ -1851,6 +1851,7 @@ function updateSimulation(dt) {
         const fl2 = idx === 0 ? wr.lane : path[idx - 1].lane;
         sim.wrPos[i].yard = fy + (path[idx].yard - fy) * t2;
         sim.wrPos[i].lane = fl2 + (path[idx].lane - fl2) * t2;
+        sim.wrPos[i].lane = Math.max(2, Math.min(58, sim.wrPos[i].lane)); // V17.1: clamp in-bounds
       }
       // V17: DB movement speed realism (5B)
       for (let i = 0; i < 4; i++) {
@@ -1873,6 +1874,7 @@ function updateSimulation(dt) {
           sim.dbPos[i].yard += (tgt.yard - sim.dbPos[i].yard) * 0.015;
           sim.dbPos[i].lane += (tgt.lane - sim.dbPos[i].lane) * 0.01;
         }
+        sim.dbPos[i].lane = Math.max(2, Math.min(58, sim.dbPos[i].lane)); // V17.1: clamp in-bounds
       }
       const rs = currentPlay.rushFast ? 0.05 : 0.03;
       const sr = hasRelic('quick_release') ? 0.8 : 1;
@@ -1902,7 +1904,7 @@ function updateSimulation(dt) {
         sim.ballPos = { yard: sim.qbPos.yard, lane: sim.qbPos.lane };
         sim.ballTarget = { yard: sim.wrPos[sim.chosenWR].yard, lane: sim.wrPos[sim.chosenWR].lane };
         sim.qbAction = 'throw'; sim.wrActions[sim.chosenWR] = 'catch';
-        sim.throwPowerTimer = 0.3; TimeScale.set(0.4, 0.5); Camera.setForPhase('throw');
+        sim.throwPowerTimer = 0.3; TimeScale.set(0.65, 0.5); Camera.setForPhase('throw');
       }
       break;
     case 'scramble':
@@ -1956,8 +1958,22 @@ function updateSimulation(dt) {
       for (let i = 0; i < 4; i++) {
         const path = routePaths[currentPlay.offense.wrs[i].route](currentPlay.offense.wrs[i].yard, currentPlay.offense.wrs[i].lane);
         const end = path[path.length - 1];
-        sim.wrPos[i].yard += (end.yard - sim.wrPos[i].yard) * 0.05;
-        sim.wrPos[i].lane += (end.lane - sim.wrPos[i].lane) * 0.05;
+        sim.wrPos[i].yard += (end.yard - sim.wrPos[i].yard) * 0.12; // V17.1: faster lerp (was 0.05)
+        sim.wrPos[i].lane += (end.lane - sim.wrPos[i].lane) * 0.12;
+        sim.wrPos[i].lane = Math.max(2, Math.min(58, sim.wrPos[i].lane)); // V17.1: clamp in-bounds
+      }
+      // V17.1: DBs continue moving during throw (dont freeze)
+      for (let i = 0; i < 4; i++) {
+        const db = currentPlay.defense.dbs[i];
+        if (db.role === "man" && db.coverIdx >= 0) {
+          const tgt = sim.wrPos[db.coverIdx];
+          sim.dbPos[i].yard += (tgt.yard - sim.dbPos[i].yard) * 0.10;
+          sim.dbPos[i].lane += (tgt.lane - sim.dbPos[i].lane) * 0.10;
+        } else {
+          sim.dbPos[i].yard += (sim.ballTarget.yard - sim.dbPos[i].yard) * 0.08;
+          sim.dbPos[i].lane += (sim.ballTarget.lane - sim.dbPos[i].lane) * 0.08;
+        }
+        sim.dbPos[i].lane = Math.max(2, Math.min(58, sim.dbPos[i].lane)); // V17.1: clamp in-bounds
       }
       // Continuously update ball target to track chosen WR's current position
       sim.ballTarget.yard = sim.wrPos[sim.chosenWR].yard;
@@ -1965,9 +1981,9 @@ function updateSimulation(dt) {
       sim.ballPos.yard = sim.qbPos.yard + (sim.ballTarget.yard - sim.qbPos.yard) * sim.throwProgress;
       sim.ballPos.lane = sim.qbPos.lane + (sim.ballTarget.lane - sim.qbPos.lane) * sim.throwProgress;
       sim.ballTrail.push({ ...sim.ballPos }); if (sim.ballTrail.length > 8) sim.ballTrail.shift();
-      if (sim.throwProgress > 0.6) TimeScale.set(0.5, 0.3);
+      if (sim.throwProgress > 0.6) TimeScale.set(0.6, 0.3);
       if (sim.throwProgress >= 1) {
-        sim.phase = 'catch'; sim.timer = 0; TimeScale.set(0.3, 0.3);
+        sim.phase = 'catch'; sim.timer = 0; TimeScale.set(0.5, 0.3);
         Camera.setForPhase('catch');
         const ws = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane);
         if (sim.success) { addParticle(ws.x, ws.y, 'catch_flash', 12); SFX.play('catch'); }
@@ -1979,6 +1995,26 @@ function updateSimulation(dt) {
     case 'catch':
       sim.catchAnim = Math.min(1, sim.timer / 0.6);
       if (sim.success && sim.catchAnim > 0.5) sim.wrActions[sim.chosenWR] = 'celebrate';
+      // V17.1: Recalculate YAC based on actual DB positions at catch point
+      if (sim.success && !sim.yacRecalcDone) {
+        sim.yacRecalcDone = true;
+        let actualClosestDB = 999;
+        for (let i = 0; i < 4; i++) {
+          const dist = Math.sqrt(Math.pow(sim.dbPos[i].yard - sim.wrPos[sim.chosenWR].yard, 2) + Math.pow(sim.dbPos[i].lane - sim.wrPos[sim.chosenWR].lane, 2));
+          if (dist < actualClosestDB) actualClosestDB = dist;
+        }
+        const wrSpd = wrs[sim.chosenWR].spd;
+        const spdBonus = Math.max(0, Math.floor((wrSpd - 65) / 10));
+        let newYac = 0;
+        if (actualClosestDB > 12) { newYac = 8 + Math.floor(Math.random() * 8) + spdBonus; sim.yacType = "wide_open"; }
+        else if (actualClosestDB > 6) { newYac = 3 + Math.floor(Math.random() * 5) + spdBonus; sim.yacType = "room_to_run"; }
+        else if (actualClosestDB > 3) { newYac = 1 + Math.floor(Math.random() * 3); sim.yacType = "flag_pull"; }
+        else { newYac = 0; sim.yacType = "immediate_flag"; }
+        if (hasRelic("ghost_boots")) newYac = Math.floor(newYac * 1.2);
+        const maxYards = 50 - game.ballYardLine;
+        sim.yacYards = Math.min(newYac, Math.max(0, maxYards - sim.routeYards));
+        sim.yardsGained = Math.min(sim.routeYards + sim.yacYards, maxYards);
+      }
       if (sim.timer > 1.0) {
         if (sim.success && sim.yacYards > 0) {
           // V17: YAC phase — WR runs with ball after catch
