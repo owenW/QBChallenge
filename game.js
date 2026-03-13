@@ -2145,16 +2145,20 @@ function startSimulation(chosenWR) {
     yacTimer: 0, yacDuration: 0, yacStartYard: 0, yacStartLane: 0,
     yacTargetYard: 0, yacTargetLane: 0, yacChaserDB: 0,
   };
-  game.state = 'passType'; game.passType = 'touch'; game.scrambleResult = null;
+  // V20: Skip passType screen — go straight to simulation with live pass type selection
+  game.state = 'simulation'; game.passType = null; game.scrambleResult = null;
+  game.waitingForPassType = true; // Player must click pass type during routes
   game.readingPhase = false; Replay.reset();
   SFX.play('snap'); TimeScale.set(1, 0); Camera.setForPhase('reading');
 }
 
-// V18: No longer calculates success here — outcome determined at throw completion using actual positions
-function beginSimAfterPassType() {
-  if (!sim) return;
-  // Just start the throw animation — success/failure calculated when ball arrives (throw phase end)
-  game.state = 'simulation';
+// V20: Called when player selects pass type DURING simulation (live throw timing)
+function triggerThrow(passType) {
+  if (!sim || sim.phase !== 'routes' || !game.waitingForPassType) return;
+  game.passType = passType;
+  game.waitingForPassType = false;
+  game.throwMomentRouteProgress = sim.routeProgress; // record when player chose to throw
+  
   const cl = getComposureLevel();
   if (cl === 'nervous') triggerShake(2); else if (cl === 'shaky') triggerShake(4); else if (cl === 'tilted') triggerShake(8);
   const route = currentPlay.offense.wrs[sim.chosenWR].route;
@@ -2274,15 +2278,12 @@ function updateSimulation(dt) {
         Camera.setForPhase('scramble'); SFX.play('sack_impact');
         break;
       }
-      // Dynamic throw threshold — pressure forces earlier release
-      let throwThreshold = 0.7;
-      if (rushDistNow < 3) throwThreshold = 0.5;
-      else if (rushDistNow < 5) throwThreshold = 0.6;
-      else if (rushDistNow > 8) throwThreshold = 0.85;
-      if (sim.routeProgress >= throwThreshold) {
-        // V19.1: Pressure commentary based on rusher distance
-        if (rushDistNow < 4) Commentary.generate('pressure_throw');
-        else if (rushDistNow > 8) Commentary.generate('clean_pocket');
+      // V20: Player controls throw timing — no auto-throw
+      // If player has selected a pass type (via triggerThrow), transition to throw phase
+      if (!game.waitingForPassType && game.passType) {
+        const rushDistAtThrow = rushDistNow;
+        if (rushDistAtThrow < 4) Commentary.generate('pressure_throw');
+        else if (rushDistAtThrow > 8) Commentary.generate('clean_pocket');
         sim.phase = 'throw'; sim.timer = 0;
         sim.ballPos = { yard: sim.qbPos.yard, lane: sim.qbPos.lane };
         // V18.6: Lead the receiver — throw to where WR WILL BE when ball arrives
@@ -3711,8 +3712,68 @@ function drawPassTypeScreen(dt) {
     ctx.fillStyle = '#888'; ctx.font = '8px "Courier New"'; ctx.fillText(t.desc, bx + btnW / 2, bY + 36);
   }
   ctx.restore();
-  if (passTypeTimer >= timeLimit) { game.passType = 'touch'; beginSimAfterPassType(); }
+  if (passTypeTimer >= timeLimit) { game.passType = 'touch'; triggerThrow('touch'); }
   drawTopBar(); drawPoiseRating(); drawRelicsBar(); drawScoreBug(); drawParticles(); Commentary.draw(ctx);
+}
+
+// V20: Draw pass type buttons as overlay during live simulation
+function drawLivePassTypeOverlay() {
+  if (!game.waitingForPassType || !sim || (sim.phase !== 'routes' && sim.phase !== 'dropback')) return;
+  
+  passTypeButtons = [];
+  
+  // Countdown bar based on rusher progress
+  const rushDistNow = sim.rushEntity ? Math.sqrt(
+    Math.pow(sim.rushEntity.yard - sim.qbPos.yard, 2) +
+    Math.pow(sim.rushEntity.lane - sim.qbPos.lane, 2)
+  ) : 10;
+  const maxRushDist = 10; // starting distance roughly
+  const urgency = 1 - Math.min(1, Math.max(0, rushDistNow / maxRushDist));
+  
+  // Semi-transparent backdrop at bottom
+  ctx.save();
+  ctx.fillStyle = `rgba(0,0,0,${0.3 + urgency * 0.3})`;
+  ctx.fillRect(0, H - 90, W, 90);
+  
+  // Urgency bar
+  const barColor = urgency < 0.4 ? '#4CAF50' : urgency < 0.7 ? '#FF9800' : '#F44336';
+  ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(20, H - 88, W - 40, 4);
+  ctx.fillStyle = barColor; ctx.fillRect(20, H - 88, (W - 40) * (1 - urgency), 4);
+  
+  // Label
+  ctx.fillStyle = urgency > 0.7 ? '#F44336' : '#fff';
+  ctx.font = 'bold 10px "Courier New"'; ctx.textAlign = 'center';
+  const urgencyText = urgency > 0.7 ? '⚠️ 快出手！冲传逼近！' : urgency > 0.4 ? '选择传球方式...' : '口袋干净 - 选择传球方式';
+  ctx.fillText(urgencyText, W / 2, H - 76);
+  
+  // Route progress indicator
+  const routePct = Math.round(sim.routeProgress * 100);
+  ctx.fillStyle = '#aaa'; ctx.font = '8px "Courier New"';
+  ctx.fillText(`线路进度: ${routePct}%`, W / 2, H - 66);
+  
+  // Pass type buttons
+  const types = [
+    { type: 'bullet', label: '🔴 子弹', desc: '快速精准', color: COL.bulletRed },
+    { type: 'touch', label: '🟡 弧线', desc: '均衡', color: COL.touchYellow },
+    { type: 'lob', label: '🔵 高抛', desc: '深传', color: COL.lobBlue },
+  ];
+  const btnW = 120, spacing = 10, totalBW = 3 * btnW + 2 * spacing;
+  const startBX = (W - totalBW) / 2, bY = H - 58;
+  for (let i = 0; i < 3; i++) {
+    const t = types[i], bx = startBX + i * (btnW + spacing);
+    const btn = { x: bx, y: bY, w: btnW, h: 44, action: `pass_${t.type}` };
+    passTypeButtons.push(btn);
+    const hover = isInsideRect(mouseX, mouseY, bx, bY, btnW, 44);
+    
+    // Pulsing effect when under pressure
+    const pulse = urgency > 0.6 ? Math.sin(game.time * 8) * 3 : 0;
+    drawCardFrame(ctx, bx - pulse/2, bY, btnW + pulse, 44, hover);
+    ctx.fillStyle = t.color; ctx.fillRect(bx + 3 - pulse/2, bY + 3, btnW - 6 + pulse, 2);
+    ctx.fillStyle = COL.parchment; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText(t.label, bx + btnW / 2, bY + 22);
+    ctx.fillStyle = '#888'; ctx.font = '8px "Courier New"'; ctx.fillText(t.desc, bx + btnW / 2, bY + 36);
+  }
+  ctx.restore();
 }
 
 // ============================================================
@@ -4189,16 +4250,20 @@ function handleClick(e) {
       for (const btn of cardButtons) { if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) { startSimulation(btn.wrIndex); passTypeTimer = 0; return; } }
       break;
     case 'passType':
-      for (const btn of passTypeButtons) {
-        if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
-          if (btn.action === 'pass_bullet') game.passType = 'bullet';
-          else if (btn.action === 'pass_touch') game.passType = 'touch';
-          else if (btn.action === 'pass_lob') game.passType = 'lob';
-          beginSimAfterPassType(); return;
-        }
-      }
+      // V20: passType state no longer used — pass type selected during simulation
       break;
     case 'simulation':
+      // V20: Pass type selection during live simulation
+      if (game.waitingForPassType && sim && (sim.phase === 'routes' || sim.phase === 'dropback')) {
+        for (const btn of passTypeButtons) {
+          if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
+            if (btn.action === 'pass_bullet') triggerThrow('bullet');
+            else if (btn.action === 'pass_touch') triggerThrow('touch');
+            else if (btn.action === 'pass_lob') triggerThrow('lob');
+            return;
+          }
+        }
+      }
       if (sim && sim.phase === 'scramble' && sim.scrambleChoice === null) {
         for (const btn of scrambleButtons) {
           if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
@@ -4358,7 +4423,7 @@ function gameLoop(timestamp) {
       case 'reading': drawReadingPhase(dt); break;
       case 'choosing': drawChoosingScreen(); break;
       case 'passType': drawPassTypeScreen(dt); break;
-      case 'simulation': drawSimulationScreen(dt); break;
+      case 'simulation': drawSimulationScreen(dt); drawLivePassTypeOverlay(); break;
       case 'playResult': drawPlayResult(); break;
       case 'upgrade': drawUpgradeScreen(); break;
       case 'halftime': drawHalftimeScreen(); break;
