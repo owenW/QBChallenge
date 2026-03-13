@@ -2028,12 +2028,85 @@ function startSimulation(chosenWR) {
     maxSpeed: PHYSICS.DB_MAX_SPEED,
     accel: PHYSICS.DB_ACCEL,
     role: db.role,
+    preSnapRole: db.role, // remember what they showed pre-snap
     coverIdx: db.coverIdx !== undefined ? db.coverIdx : -1,
     reactionTimer: db.role === 'man' ? 0.05 : PHYSICS.DB_REACTION_DELAY,
     hasReacted: false,
+    disguiseSwitched: false, // V19.2: will they switch role post-snap?
     zoneAnchorYard: db.role === 'deep' ? getLOSYard() + 12 : db.role === 'flat' ? getLOSYard() + 5 : db.role === 'free' ? getLOSYard() + 15 : db.yard,
     zoneAnchorLane: db.role === 'free' ? 30 : db.lane,
   }));
+
+  // V19.2: Post-snap disguise — random chance DBs switch roles after snap
+  // Higher game number = smarter defense = more disguises
+  const disguiseChance = 0.15 + game.gameNum * 0.04; // 19% game 1 → 55% game 10
+  const team = getCurrentTeam();
+  if (Math.random() < disguiseChance) {
+    // Pick a disguise type
+    const disguiseType = Math.random();
+    if (disguiseType < 0.3 && dbEntities.length >= 2) {
+      // SWAP: Two DBs swap roles (corner becomes safety, safety becomes corner)
+      const a = Math.floor(Math.random() * dbEntities.length);
+      let b = (a + 1 + Math.floor(Math.random() * (dbEntities.length - 1))) % dbEntities.length;
+      const tmpRole = dbEntities[a].role;
+      const tmpCover = dbEntities[a].coverIdx;
+      const tmpAnchorY = dbEntities[a].zoneAnchorYard;
+      const tmpAnchorL = dbEntities[a].zoneAnchorLane;
+      dbEntities[a].role = dbEntities[b].role;
+      dbEntities[a].coverIdx = dbEntities[b].coverIdx;
+      dbEntities[a].zoneAnchorYard = dbEntities[b].zoneAnchorYard;
+      dbEntities[a].zoneAnchorLane = dbEntities[b].zoneAnchorLane;
+      dbEntities[b].role = tmpRole;
+      dbEntities[b].coverIdx = tmpCover;
+      dbEntities[b].zoneAnchorYard = tmpAnchorY;
+      dbEntities[b].zoneAnchorLane = tmpAnchorL;
+      dbEntities[a].disguiseSwitched = true;
+      dbEntities[b].disguiseSwitched = true;
+    } else if (disguiseType < 0.55) {
+      // ROTATE: Zone DBs shift zones (deep becomes flat, flat becomes deep)
+      const zoneDBs = dbEntities.filter(d => d.role === 'deep' || d.role === 'flat' || d.role === 'free');
+      if (zoneDBs.length >= 2) {
+        // Rotate zone anchors
+        const savedAnchor = { y: zoneDBs[0].zoneAnchorYard, l: zoneDBs[0].zoneAnchorLane, role: zoneDBs[0].role };
+        for (let zi = 0; zi < zoneDBs.length - 1; zi++) {
+          zoneDBs[zi].zoneAnchorYard = zoneDBs[zi + 1].zoneAnchorYard;
+          zoneDBs[zi].zoneAnchorLane = zoneDBs[zi + 1].zoneAnchorLane;
+          zoneDBs[zi].role = zoneDBs[zi + 1].role;
+          zoneDBs[zi].disguiseSwitched = true;
+        }
+        zoneDBs[zoneDBs.length - 1].zoneAnchorYard = savedAnchor.y;
+        zoneDBs[zoneDBs.length - 1].zoneAnchorLane = savedAnchor.l;
+        zoneDBs[zoneDBs.length - 1].role = savedAnchor.role;
+        zoneDBs[zoneDBs.length - 1].disguiseSwitched = true;
+      }
+    } else if (disguiseType < 0.75) {
+      // BLITZ DISGUISE: A zone/deep DB suddenly plays man on nearest WR
+      const zoneDB = dbEntities.find(d => d.role === 'deep' || d.role === 'flat' || d.role === 'free');
+      if (zoneDB) {
+        // Find nearest WR to this DB
+        let nearWR = 0, nearDist = 999;
+        for (let wi = 0; wi < 4; wi++) {
+          const d = Math.abs(zoneDB.lane - play.offense.wrs[wi].lane);
+          if (d < nearDist) { nearDist = d; nearWR = wi; }
+        }
+        zoneDB.role = 'man';
+        zoneDB.coverIdx = nearWR;
+        zoneDB.disguiseSwitched = true;
+      }
+    } else {
+      // BAIL: A man DB drops to zone after snap (shows press, bails deep)
+      const manDB = dbEntities.find(d => d.role === 'man');
+      if (manDB) {
+        manDB.role = 'deep';
+        manDB.coverIdx = -1;
+        manDB.zoneAnchorYard = getLOSYard() + 14; // bail deep
+        manDB.zoneAnchorLane = manDB.lane;
+        manDB.disguiseSwitched = true;
+      }
+    }
+    // Update reaction timers for switched DBs (slight extra delay from role change)
+    dbEntities.forEach(d => { if (d.disguiseSwitched) d.reactionTimer += 0.1; });
+  }
   const rushEntity = {
     yard: play.defense.rusher.yard, lane: play.defense.rusher.lane,
     vy: 0, vl: 0,
