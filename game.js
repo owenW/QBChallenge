@@ -1206,14 +1206,25 @@ function updateShake() {
 }
 
 const Camera = {
-  x: 0, y: 0, zoom: 1.0, targetX: 0, targetY: 0, targetZoom: 1.0,
+  // V20.5: Complete camera rewrite — focusX/Y is the world point to center on screen
+  focusX: W/2, focusY: H/2, targetFocusX: W/2, targetFocusY: H/2,
+  zoom: 1.0, targetZoom: 1.0,
   shakeX: 0, shakeY: 0, shakeDecay: 0.9, tdPulseTimer: -1,
+  // Compat: keep x/y as offsets from center for any code that sets them
+  get x() { return this.focusX - W/2; },
+  set x(v) { this.focusX = W/2 + v; },
+  get y() { return this.focusY - H/2; },
+  set y(v) { this.focusY = H/2 + v; },
+  get targetX() { return this.targetFocusX - W/2; },
+  set targetX(v) { this.targetFocusX = W/2 + v; },
+  get targetY() { return this.targetFocusY - H/2; },
+  set targetY(v) { this.targetFocusY = H/2 + v; },
   update(dt) {
-    // V20.3: Faster camera tracking during throw phase
     const isThrow = sim && sim.phase === 'throw';
-    const camSpeed = isThrow ? 0.25 : 0.08;
-    const zoomSpeed = isThrow ? 0.18 : 0.06;
-    this.x += (this.targetX - this.x) * camSpeed; this.y += (this.targetY - this.y) * camSpeed;
+    const camSpeed = isThrow ? 0.3 : 0.1;
+    const zoomSpeed = isThrow ? 0.2 : 0.08;
+    this.focusX += (this.targetFocusX - this.focusX) * camSpeed;
+    this.focusY += (this.targetFocusY - this.focusY) * camSpeed;
     this.zoom += (this.targetZoom - this.zoom) * zoomSpeed;
     this.shakeX *= this.shakeDecay; this.shakeY *= this.shakeDecay;
     if (this.tdPulseTimer >= 0) {
@@ -1223,28 +1234,51 @@ const Camera = {
       else { this.tdPulseTimer = -1; this.targetZoom = 1.0; }
     }
   },
+  // Set camera to center on a screen-space point
+  lookAt(screenX, screenY) {
+    this.targetFocusX = screenX;
+    this.targetFocusY = screenY;
+  },
   shake(intensity) { this.shakeX = (Math.random() - 0.5) * intensity; this.shakeY = (Math.random() - 0.5) * intensity; },
-  reset() { this.x = 0; this.y = 0; this.zoom = 1.0; this.targetX = 0; this.targetY = 0; this.targetZoom = 1.0; this.shakeX = 0; this.shakeY = 0; this.tdPulseTimer = -1; },
+  reset() { this.focusX = W/2; this.focusY = H/2; this.targetFocusX = W/2; this.targetFocusY = H/2; this.zoom = 1.0; this.targetZoom = 1.0; this.shakeX = 0; this.shakeY = 0; this.tdPulseTimer = -1; },
   setForPhase(phase) {
     switch (phase) {
-      case 'reading': case 'presnap': case 'choosing': this.targetZoom = 1.0; this.targetX = 0; this.targetY = 0; break;
-      case 'motion': this.targetZoom = 1.03; break;
-      case 'throw': this.targetZoom = 1.15; if (sim && sim.ballTarget) { const ts = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane); this.targetY = H/2 - ts.y; this.targetX = (W/2 - ts.x) * 0.6; } break;
-      case 'catch': this.targetZoom = 1.12; if (sim && sim.wrPos && sim.chosenWR != null) { const ts = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane); this.targetY = (H/2 - ts.y) * 0.4; } break;
+      case 'reading': case 'presnap': case 'choosing': this.targetZoom = 1.0; this.targetFocusX = W/2; this.targetFocusY = H/2; break;
+      case 'throw': {
+        this.targetZoom = 1.15;
+        // Look at ball target
+        if (sim && sim.ballTarget) {
+          const ts = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane);
+          this.lookAt(ts.x, ts.y);
+        }
+        break;
+      }
+      case 'catch': {
+        this.targetZoom = 1.12;
+        if (sim && sim.wrPos && sim.chosenWR != null) {
+          const ts = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane);
+          this.lookAt(ts.x, ts.y);
+        }
+        break;
+      }
       case 'td': this.tdPulseTimer = 0; break;
       case 'scramble': this.targetZoom = 1.15; break;
       case 'sack': case 'incomplete': this.shake(6); break;
-      case 'replay_wide': this.targetZoom = 0.9; this.targetX = 0; this.targetY = 0; break;
+      case 'replay_wide': this.targetZoom = 0.9; this.targetFocusX = W/2; this.targetFocusY = H/2; break;
       case 'replay_track': this.targetZoom = 1.15; break;
       case 'replay_tight': this.targetZoom = 1.3; break;
-      case 'victory_ceremony': this.targetZoom = 0.75; this.targetX = 0; this.targetY = 0; break;
+      case 'victory_ceremony': this.targetZoom = 0.75; this.targetFocusX = W/2; this.targetFocusY = H/2; break;
     }
   },
   beginTransform() {
     ctx.save();
-    const focusX = W / 2 + this.x + this.shakeX;
-    const focusY = H / 2 + this.y + this.shakeY;
-    ctx.translate(focusX, focusY); ctx.scale(this.zoom, this.zoom); ctx.translate(-focusX, -focusY);
+    // Translate so that focusX/Y is at screen center, then scale around screen center
+    const sx = this.focusX + this.shakeX;
+    const sy = this.focusY + this.shakeY;
+    const cx = W/2, cy = H/2;
+    ctx.translate(cx, cy);
+    ctx.scale(this.zoom, this.zoom);
+    ctx.translate(-sx, -sy);
   },
   endTransform() { ctx.restore(); }
 };
@@ -2194,16 +2228,39 @@ function updateSimulation(dt) {
     case 'routes': {
       sim.routeProgress = Math.min(1, sim.timer / 1.2); sim.qbAction = 'idle';
       Camera.setForPhase('choosing');
-      // V18: WRs use physicsMove toward their route path target
+      // V20.5: WRs follow route path, then keep running past endpoint on go/running routes
+      const stopRouteSet = new Set(['curl', 'hitch', 'hook', 'comeback']);
       for (let i = 0; i < 4; i++) {
         const wr = currentPlay.offense.wrs[i], path = routePaths[wr.route](wr.yard, wr.lane);
-        const total = path.length, seg = sim.routeProgress * total;
-        const idx = Math.min(Math.floor(seg), total - 1), t2 = seg - idx;
-        const fy = idx === 0 ? wr.yard : path[idx - 1].yard;
-        const fl2 = idx === 0 ? wr.lane : path[idx - 1].lane;
-        const targetYard = fy + (path[idx].yard - fy) * t2;
-        const targetLane = fl2 + (path[idx].lane - fl2) * t2;
-        physicsMove(sim.wrEntities[i], targetYard, targetLane, sd);
+        const total = path.length;
+        
+        if (sim.routeProgress < 1) {
+          // Still running the route path
+          const seg = sim.routeProgress * total;
+          const idx = Math.min(Math.floor(seg), total - 1), t2 = seg - idx;
+          const fy = idx === 0 ? wr.yard : path[idx - 1].yard;
+          const fl2 = idx === 0 ? wr.lane : path[idx - 1].lane;
+          const targetYard = fy + (path[idx].yard - fy) * t2;
+          const targetLane = fl2 + (path[idx].lane - fl2) * t2;
+          physicsMove(sim.wrEntities[i], targetYard, targetLane, sd);
+        } else {
+          // Route complete — what does WR do?
+          const routeEndPt = path[total - 1];
+          if (stopRouteSet.has(wr.route)) {
+            // Stop route: WR sits at endpoint
+            physicsMove(sim.wrEntities[i], routeEndPt.yard, routeEndPt.lane, sd);
+          } else {
+            // Running route (go, post, corner, slant, out, streak, etc.): keep running same direction
+            const prevPt = total >= 2 ? path[total - 2] : { yard: wr.yard, lane: wr.lane };
+            const extDirY = routeEndPt.yard - prevPt.yard;
+            const extDirL = routeEndPt.lane - prevPt.lane;
+            const extD = Math.sqrt(extDirY * extDirY + extDirL * extDirL) || 1;
+            // Extend 20 yards past route end in same direction
+            const extYard = routeEndPt.yard + (extDirY / extD) * 20;
+            const extLane = Math.max(2, Math.min(58, routeEndPt.lane + (extDirL / extD) * 20));
+            physicsMove(sim.wrEntities[i], extYard, extLane, sd);
+          }
+        }
       }
       // V18.1: Physics-based DB movement — man reacts with delay, zone drops then reads
       for (let i = 0; i < 4; i++) {
@@ -2511,13 +2568,11 @@ function updateSimulation(dt) {
       if (sim.ballTrail.length > 8) sim.ballTrail.shift();
 
       if (sim.throwProgress > 0.6) TimeScale.set(0.6, 0.3);
-      // V20.4: Camera centers on ball during flight
+      // V20.5: Camera directly tracks ball position
       if (sim.ballPos) {
         const bscr = FIELD.toScreen(sim.ballPos.yard, sim.ballPos.lane);
-        // Center ball on screen (full offset, not partial)
-        Camera.targetY = H/2 - bscr.y;
-        Camera.targetX = (W/2 - bscr.x) * 0.6; // less horizontal shift (field is narrow)
-        Camera.targetZoom = 1.15 + sim.throwProgress * 0.1; // gentle zoom 1.15 → 1.25
+        Camera.lookAt(bscr.x, bscr.y);
+        Camera.targetZoom = 1.15 + sim.throwProgress * 0.1;
       }
       if (sim.throwProgress >= 1) {
         // V18.7: Check if WR is actually near the ball landing point
