@@ -2859,6 +2859,11 @@ function handlePlayResult() {
     if (game.downs.current > 4) { endCurrentGame(false); sim = null; return; }
   } else if (sim.isINT) {
     game.seasonStats.ints++; addStress(25); consecutiveCatches = 0; game.drivePlays++;
+    // V21: Reset td_streak on INT, check no_int objective fail
+    if (game.currentObjective && game.currentObjective.id === 'td_streak') game.objectiveProgress = 0;
+    if (game.currentObjective && game.currentObjective.failCheck && game.currentObjective.failCheck()) {
+      endCurrentGame(false); sim = null; return;
+    }
     // INT = opponent scores
     game.gameScore.opponent += 7;
     Commentary.teamComment(getCurrentTeam(), 'int');
@@ -2883,8 +2888,18 @@ function handlePlayResult() {
       game.seasonStats.tds++; game.score += 600; game.gold += 100;
       game.gameScore.player += 7;
       reduceStress(10);
+      // V21: Track objective progress (td_streak, redzone_king, etc.)
+      if (game.currentObjective) {
+        if (game.currentObjective.id === 'td_streak') game.objectiveProgress = (game.objectiveProgress || 0) + 1;
+        if (game.currentObjective.id === 'redzone_king') game.objectiveProgress = (game.objectiveProgress || 0) + 1;
+      }
+      // V21: Check mid-game objective completion
+      if (game.currentObjective && game.currentObjective.check && game.currentObjective.check()) {
+        endCurrentGame(true); sim = null; return;
+      }
       // Reset for next drive
-      game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
+      game.ballYardLine = game.currentObjective && game.currentObjective.startYard ? game.currentObjective.startYard : 5;
+      game.downs.current = 1; game.firstDownLine = 25;
       // V15: Opponent scoring with progression logic instead of pure RNG
       // Later games = better opponents, but not random coinflips
       var oppScoreChance = 0.15 + game.gameNum * 0.04; // 19% game 1 → 55% game 10
@@ -2947,9 +2962,14 @@ function handlePlayResult() {
 }
 
 function endCurrentGame(won) {
+  // V21: Check objective completion
+  const obj = game.currentObjective;
+  if (obj && obj.check && obj.check()) won = true;
+  if (obj && obj.failCheck && obj.failCheck()) won = false;
+  
   const team = getCurrentTeam();
-  const isTie = game.gameScore.player === game.gameScore.opponent;
-  game.seasonRecord.push({ teamId: team.id, won, tied: isTie, playerScore: game.gameScore.player, oppScore: game.gameScore.opponent });
+  const isTie = game.gameScore.player === game.gameScore.opponent && !obj;
+  game.seasonRecord.push({ teamId: team.id, won, tied: isTie, playerScore: game.gameScore.player, oppScore: game.gameScore.opponent, objective: obj ? obj.id : null });
   if (!won && !isTie) game.losses++; // Ties don't count as losses
   if (game.losses >= game.maxLosses) {
     game.state = 'gameOver'; SFX.play('gameover'); return;
@@ -3112,10 +3132,16 @@ function drawScoreBug() {
   drawPixelRect(ctx, W / 2 - 40, bY + 6, 80, 16, 'rgba(212,168,64,0.15)', COL.uiGold);
   ctx.fillText(dt2, W / 2, bY + 17);
 
-  // Quarter & play count
+  // Clock
   ctx.fillStyle = '#888'; ctx.font = '8px "Courier New"';
   const _cm = Math.floor(game.gameClock / 60), _cs = Math.floor(game.gameClock % 60);
-  ctx.fillText(`第${game.gameNum}场 · ${_cm}:${String(_cs).padStart(2,'0')}`, W / 2, bY + 38);
+  ctx.fillText(`${_cm}:${String(_cs).padStart(2,'0')}`, W / 2, bY + 32);
+  
+  // V21: Objective display
+  if (game.currentObjective) {
+    ctx.fillStyle = COL.uiAccent; ctx.font = 'bold 7px "Courier New"';
+    ctx.fillText(`🎯 ${game.currentObjective.name}`, W / 2, bY + 44);
+  }
 
   // Gold
   ctx.fillStyle = COL.uiGold; ctx.font = '8px "Courier New"'; ctx.textAlign = 'center';
@@ -4473,9 +4499,57 @@ function startNewGame() {
   generateSeasonMap(); SeedSystem.isChallenge = false;
 }
 
+// V21: Game objectives — each game has a unique win condition
+const GAME_OBJECTIVES = [
+  // Game 1-2: Tutorial / Easy
+  { id: 'score_21', name: '得分竞赛', desc: '6分钟内得到21分', clock: 360,
+    check: () => game.gameScore.player >= 21, failCheck: () => game.gameClock <= 0 && game.gameScore.player < 21 },
+  { id: 'first_win', name: '首胜', desc: '赢下比赛（比分领先）', clock: 360,
+    check: () => game.gameClock <= 0 && game.gameScore.player > game.gameScore.opponent,
+    failCheck: () => game.gameClock <= 0 && game.gameScore.player <= game.gameScore.opponent },
+  // Game 3-4: Skill challenges
+  { id: 'two_min_drill', name: '两分钟进攻', desc: '2分钟内得到14分', clock: 120,
+    check: () => game.gameScore.player >= 14, failCheck: () => game.gameClock <= 0 && game.gameScore.player < 14 },
+  { id: 'no_int', name: '零失误', desc: '不被抄截的情况下得到21分', clock: 360,
+    check: () => game.gameScore.player >= 21, failCheck: () => game.seasonStats.ints > 0 || (game.gameClock <= 0 && game.gameScore.player < 21) },
+  // Game 5-6: Harder challenges
+  { id: 'comeback', name: '大逆转', desc: '落后14分开局，逆转取胜', clock: 360, startBehind: 14,
+    check: () => game.gameClock <= 0 && game.gameScore.player > game.gameScore.opponent,
+    failCheck: () => game.gameClock <= 0 && game.gameScore.player <= game.gameScore.opponent },
+  { id: 'td_streak', name: '达阵连击', desc: '连续得到3个达阵（中间不能丢球）', clock: 300,
+    check: () => (game.objectiveProgress || 0) >= 3,
+    failCheck: () => game.gameClock <= 0 && (game.objectiveProgress || 0) < 3 },
+  // Game 7-8: Expert
+  { id: 'blitz_survival', name: '闪电冲传', desc: '面对加速冲传，得到21分', clock: 300, rushBoost: true,
+    check: () => game.gameScore.player >= 21, failCheck: () => game.gameClock <= 0 && game.gameScore.player < 21 },
+  { id: 'redzone_king', name: '红区之王', desc: '从30码线开始，4档内达阵×4次', clock: 360, startYard: 30,
+    check: () => (game.objectiveProgress || 0) >= 4,
+    failCheck: () => game.gameClock <= 0 && (game.objectiveProgress || 0) < 4 },
+  // Game 9-10: Championship
+  { id: 'perfect_half', name: '完美半场', desc: '上半场不丢分且得到21分', clock: 360,
+    check: () => game.gameClock <= 180 && game.gameScore.player >= 21 && game.gameScore.opponent === 0,
+    failCheck: () => game.gameScore.opponent > 0 || (game.gameClock <= 0 && game.gameScore.player < 21) },
+  { id: 'championship', name: '总冠军', desc: '8分钟，击败最终Boss', clock: 480,
+    check: () => game.gameClock <= 0 && game.gameScore.player > game.gameScore.opponent,
+    failCheck: () => game.gameClock <= 0 && game.gameScore.player <= game.gameScore.opponent },
+];
+
+function getObjectiveForGame(gameNum) {
+  const idx = Math.min(gameNum - 1, GAME_OBJECTIVES.length - 1);
+  return GAME_OBJECTIVES[idx];
+}
+
 function startGame(gameIdx) {
-  game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
-  game.gameClock = 360; game.gameClockRunning = true; game.gameScore = { player: 0, opponent: 0 };
+  const objective = getObjectiveForGame(game.gameNum);
+  game.currentObjective = objective;
+  game.objectiveProgress = 0;
+  game.objectiveComplete = false;
+  
+  game.ballYardLine = objective.startYard || 5;
+  game.downs.current = 1; game.firstDownLine = 25;
+  game.gameClock = objective.clock || 360;
+  game.gameClockRunning = true;
+  game.gameScore = { player: 0, opponent: objective.startBehind || 0 };
   game.halftimeShown = false; game.teamWrPicks = [0,0,0,0];
   game.audiblesLeft = 1 + (hasRelic('audible_master') ? 1 : 0);
   game.iceFreezeUsed = false; game.disguisesLeft = 3;
@@ -4484,13 +4558,15 @@ function startGame(gameIdx) {
   game.motionUsed = false; game.motionResult = null;
   motionAnimPhase = 'idle'; motionAnimTimer = 0;
   defenseBonus = Math.max(0, (game.gameNum - 1) * 4);
+  if (objective.rushBoost) defenseBonus += 8; // Faster rusher for blitz challenge
   game.weatherType = Weather.getWeatherForGame(game.gameNum);
   generatePlay(false, false);
   game.state = 'reading'; game.readingPhase = true; game.readingTimer = 0; genericButtons = [];
   SFX.play('dc_intro');
   const team = getCurrentTeam();
-  Commentary.show(`本场对手: ${team.name} — ${team.desc}`, 4);
-  if (team.stars && team.stars[0]) setTimeout(() => Commentary.show(`注意 #${team.stars[0].num} ${team.stars[0].name}: ${team.stars[0].desc}`, 4), 2000);
+  Commentary.show(`🎯 ${objective.name}: ${objective.desc}`, 5);
+  setTimeout(() => Commentary.show(`本场对手: ${team.name} — ${team.desc}`, 4), 2500);
+  if (team.stars && team.stars[0]) setTimeout(() => Commentary.show(`注意 #${team.stars[0].num} ${team.stars[0].name}: ${team.stars[0].desc}`, 4), 5000);
 }
 
 // ============================================================
