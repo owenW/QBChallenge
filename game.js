@@ -3224,6 +3224,14 @@ function drawScoreBug() {
   ctx.fillStyle = COL.uiGold; ctx.font = '8px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText(`💰${game.gold}`, W / 2, bY + bH - 4);
 
+  // V21.5: Quit button (top-right corner of score bug)
+  const quitX = bX + bW - 28, quitY = bY + bH - 16, quitW = 24, quitH = 14;
+  ctx.fillStyle = 'rgba(180,60,60,0.5)'; ctx.fillRect(quitX, quitY, quitW, quitH);
+  ctx.fillStyle = '#aaa'; ctx.font = '7px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillText('退出', quitX + quitW/2, quitY + 10);
+  // Store quit button bounds for click detection
+  game._quitBtn = { x: quitX, y: quitY, w: quitW, h: quitH };
+
   ctx.restore();
 }
 
@@ -4479,6 +4487,21 @@ document.addEventListener('keydown', e => {
 function handleClick(e) {
   const pos = e.touches ? { x: mouseX, y: mouseY } : getCanvasPos(e);
   SFX.play('click');
+  
+  // V21.5: Quit button — available during gameplay states
+  const playStates = ['reading', 'choosing', 'simulation', 'playResult', 'halftime', 'betweenGame'];
+  if (game._quitBtn && playStates.includes(game.state)) {
+    const q = game._quitBtn;
+    if (isInsideRect(pos.x, pos.y, q.x, q.y, q.w, q.h)) {
+      if (confirm('放弃挑战？当前成绩将作为最终成绩提交。')) {
+        sim = null;
+        game.state = 'gameOver';
+        SFX.play('gameover');
+      }
+      return;
+    }
+  }
+  
   switch (game.state) {
     case 'title':
       for (const btn of genericButtons) {
