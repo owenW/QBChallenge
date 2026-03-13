@@ -1465,14 +1465,9 @@ function generatePlay(isElite, isBoss) {
     // Rusher stays at LOS+7
     defense.rusher.yard = Math.min(goalLine, defense.rusher.yard);
   }
-  // First-down-line defense: DBs line up on the first down line (midfield situations)
-  if (game.ballYardLine >= 15 && game.ballYardLine < 40) {
-    const fdLine = losY + (game.firstDownLine - game.ballYardLine); // absolute yard of first down line
-    for (const db of defense.dbs) {
-      if (db.role !== 'free') { // free safety stays back
-        db.yard = Math.min(fdLine, db.yard); // don't go past first down line, but can be on it
-      }
-    }
+  // RULE: DBs must NEVER be at or behind the LOS (losY). Always on defensive side.
+  for (const db of defense.dbs) {
+    if (db.yard <= losY) db.yard = losY + 5; // force minimum 5 yards off LOS
   }
 
   // Double agent relic: 30% chance defense misaligns
