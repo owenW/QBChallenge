@@ -2213,11 +2213,7 @@ function updateSimulation(dt) {
   TimeScale.update(dt);
   const sd = TimeScale.getDt(dt);
   sim.timer += sd;
-  if (sim.phase !== 'result' && sim.phase !== 'yac' && sim.phase !== 'scramble' && sim.phase !== 'tdCelebration' && sim.phase !== 'replay') {
-    Replay.capture({ wrPos: sim.wrPos.map(p => ({ ...p })), dbPos: sim.dbPos.map(p => ({ ...p })),
-      rushPos: { ...sim.rushPos }, qbPos: { ...sim.qbPos },
-      ballPos: sim.ballPos ? { ...sim.ballPos } : null, phase: sim.phase });
-  }
+  // Replay capture removed in V20.9
 
   switch (sim.phase) {
     case 'snap':
@@ -2730,14 +2726,10 @@ function updateSimulation(dt) {
             SFX.play('td'); PostFX.triggerBloom(1.5); Camera.setForPhase('td');
             Commentary.generate('td'); addParticle(W / 2, 200, 'td_confetti', 50);
             for (let i = 0; i < 4; i++) sim.wrActions[i] = 'celebrate';
-          } else if (isBigPlay) {
-            sim.phase = 'replay'; sim.timer = 0;
-            const ws = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane);
-            Replay.startReplay({ x: ws.x, y: ws.y }, game.passType);
-            PostFX.triggerBloom(1.0); game.highlightTimer = 3.0;
           } else {
             sim.phase = 'result'; sim.timer = 0; TimeScale.set(1, 0);
             Camera.lookAt(W/2, H/2); Camera.targetZoom = 1.0;
+            if (isBigPlay) { PostFX.triggerBloom(1.0); game.highlightTimer = 3.0; }
           }
         }
       }
@@ -2753,21 +2745,30 @@ function updateSimulation(dt) {
       sim.wrActions[sim.chosenWR] = 'run';
       // Ball tracks WR
       sim.ballPos = { yard: sim.wrPos[sim.chosenWR].yard, lane: sim.wrPos[sim.chosenWR].lane };
-      // V18: DBs chase ball carrier using physics
-      const chaserDB = sim.yacChaserDB;
+      // V20.9: DBs chase ball carrier — sync physics entities to visual positions
       for (let di = 0; di < 4; di++) {
         physicsMove(sim.dbEntities[di], sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane, sd);
+        // Sync visual positions from physics entities
+        sim.dbPos[di].yard = sim.dbEntities[di].yard;
+        sim.dbPos[di].lane = sim.dbEntities[di].lane;
       }
       // Camera tracks the WR
       const wrScr = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane);
       Camera.lookAt(wrScr.x, wrScr.y); Camera.targetZoom = 1.2;
 
-      // Check if YAC complete or DB caught up
-      const chaserDist = Math.sqrt(
-        Math.pow(sim.dbPos[chaserDB].yard - sim.wrPos[sim.chosenWR].yard, 2) +
-        Math.pow(sim.dbPos[chaserDB].lane - sim.wrPos[sim.chosenWR].lane, 2)
-      );
-      const yacDone = yacProg >= 1 || chaserDist < 1.5;
+      // Check if closest DB has reached the ball carrier (for flag pull)
+      let closestDBToWR = 999;
+      for (let di = 0; di < 4; di++) {
+        const ddist = Math.sqrt(
+          Math.pow(sim.dbEntities[di].yard - sim.wrPos[sim.chosenWR].yard, 2) +
+          Math.pow((sim.dbEntities[di].lane - sim.wrPos[sim.chosenWR].lane) * 0.42, 2)
+        );
+        if (ddist < closestDBToWR) closestDBToWR = ddist;
+      }
+      // Flag pull only happens when DB is physically close (< 1.5 yards)
+      // If time runs out but DB is far, WR gets extra yards (escaped)
+      const dbCloseEnough = closestDBToWR < 1.5;
+      const yacDone = dbCloseEnough || yacProg >= 1.5; // allow extra 50% time for DB to catch up
 
       if (yacDone) {
         const isTD = game.ballYardLine + sim.yardsGained >= 50;
@@ -2780,16 +2781,9 @@ function updateSimulation(dt) {
         } else {
           // Flag pull animation then result
           sim.wrActions[sim.chosenWR] = 'idle'; // stop
-          const isBigPlay = sim.yardsGained >= 15;
-          if (isBigPlay) {
-            sim.phase = 'replay'; sim.timer = 0;
-            const ws = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane);
-            Replay.startReplay({ x: ws.x, y: ws.y }, game.passType);
-            PostFX.triggerBloom(1.0); game.highlightTimer = 3.0;
-          } else {
-            sim.phase = 'result'; sim.timer = 0; TimeScale.set(1, 0);
-            Camera.lookAt(W/2, H/2); Camera.targetZoom = 1.0;
-          }
+          sim.phase = 'result'; sim.timer = 0; TimeScale.set(1, 0);
+          Camera.lookAt(W/2, H/2); Camera.targetZoom = 1.0;
+          if (sim.yardsGained >= 15) { PostFX.triggerBloom(1.0); game.highlightTimer = 3.0; }
         }
       }
       break;
@@ -2799,35 +2793,11 @@ function updateSimulation(dt) {
       if (Math.random() < 0.3) addParticle(Math.random() * W, 0, 'td_confetti', 2);
       for (let i = 0; i < 4; i++) sim.wrActions[i] = 'celebrate';
       if (sim.tdTimer > 2.0) {
-        sim.phase = 'replay'; sim.timer = 0;
-        const ws = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane);
-        Replay.startReplay({ x: ws.x, y: ws.y }, game.passType);
-      }
-      break;
-    case 'replay': {
-      Replay.update(dt);
-      // V20.8: Camera tracks action during replay
-      const rFrame = Replay.getFrame();
-      if (rFrame) {
-        if (rFrame.ballPos) {
-          // Track ball
-          const rbs = FIELD.toScreen(rFrame.ballPos.yard, rFrame.ballPos.lane);
-          Camera.lookAt(rbs.x, rbs.y);
-        } else if (rFrame.wrPos && sim.chosenWR != null) {
-          // Track targeted WR
-          const rws = FIELD.toScreen(rFrame.wrPos[sim.chosenWR].yard, rFrame.wrPos[sim.chosenWR].lane);
-          Camera.lookAt(rws.x, rws.y);
-        }
-        // Zoom: wide at start, tight at catch moment
-        const rProg = Replay.getReplayProgress();
-        Camera.targetZoom = Replay.isSlowMoMoment() ? 1.3 : 1.0 + rProg * 0.15;
-      }
-      if (!Replay.playing || sim.timer > 4.0) {
+        // V20.9: Skip replay, go straight to result
         sim.phase = 'result'; sim.timer = 0; TimeScale.set(1, 0);
-        Camera.lookAt(W/2, H/2); Camera.targetZoom = 1.0; Replay.playing = false;
+        Camera.lookAt(W/2, H/2); Camera.targetZoom = 1.0;
       }
       break;
-    }
     case 'result':
       sim.resultTimer = Math.min(1, sim.timer / 0.5);
       if (sim.timer > 3.5) handlePlayResult(); break;
@@ -4380,7 +4350,7 @@ function handleClick(e) {
           }
         }
       }
-      if (sim && sim.phase === 'replay' && Replay.playing) { Replay.skipRequested = true; return; }
+      // Replay removed in V20.9
       if (sim && sim.phase === 'sackResult' && sim.timer > 0.5) handlePlayResult();
       if (sim && sim.phase === 'result' && sim.timer > 0.5) handlePlayResult();
       break;
