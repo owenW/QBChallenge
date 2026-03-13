@@ -406,7 +406,9 @@ const game = {
 // ============================================================
 // V21.4: ONLINE LEADERBOARD
 // ============================================================
-const LEADERBOARD_URL = 'https://jsonblob.com/api/jsonBlob/019ce6d9-2a71-7bbf-a98f-1714712bcfa8';
+// V21.6: Leaderboard uses localStorage + optional cloud sync via jsonblob (with CORS workaround)
+const BLOB_ID = '019ce6d9-2a71-7bbf-a98f-1714712bcfa8';
+const LEADERBOARD_URL = `https://jsonblob.com/api/jsonBlob/${BLOB_ID}`;
 const Leaderboard = {
   scores: [],
   loaded: false,
@@ -415,36 +417,75 @@ const Leaderboard = {
   inputActive: false,
   submitted: false,
   
+  _loadLocal() {
+    try {
+      const saved = localStorage.getItem('qb_leaderboard');
+      if (saved) { const data = JSON.parse(saved); this.scores = data.scores || []; }
+    } catch(e) {}
+  },
+  _saveLocal() {
+    try { localStorage.setItem('qb_leaderboard', JSON.stringify({ scores: this.scores })); } catch(e) {}
+  },
+  
   async fetch() {
     if (this.loading) return;
     this.loading = true;
+    this._loadLocal(); // Always load local first
     try {
-      const res = await fetch(LEADERBOARD_URL);
-      const data = await res.json();
-      this.scores = (data.scores || []).sort((a, b) => b.score - a.score).slice(0, 50);
+      const res = await fetch(LEADERBOARD_URL, { method: 'GET', headers: { 'Accept': 'application/json' } });
+      if (res.ok) {
+        const data = await res.json();
+        const cloud = (data.scores || []);
+        // Merge: combine local + cloud, dedupe by name+ts
+        const merged = [...this.scores];
+        for (const cs of cloud) {
+          if (!merged.some(ls => ls.name === cs.name && ls.ts === cs.ts)) merged.push(cs);
+        }
+        merged.sort((a, b) => b.score - a.score);
+        this.scores = merged.slice(0, 50);
+        this._saveLocal();
+      }
       this.loaded = true;
-    } catch (e) { console.warn('Leaderboard fetch failed:', e); }
+    } catch (e) { 
+      console.warn('Cloud fetch failed, using local:', e);
+      this.loaded = this.scores.length > 0;
+    }
     this.loading = false;
   },
   
   async submit(entry) {
     if (this.submitted) return;
+    // Always save locally first
+    this.scores.push(entry);
+    this.scores.sort((a, b) => b.score - a.score);
+    this.scores = this.scores.slice(0, 50);
+    this._saveLocal();
+    this.loaded = true;
+    this.submitted = true;
+    // Try cloud sync in background
     try {
-      // GET current, merge, PUT back
-      const res = await fetch(LEADERBOARD_URL);
-      const data = await res.json();
-      const scores = data.scores || [];
-      scores.push(entry);
-      scores.sort((a, b) => b.score - a.score);
-      const top50 = scores.slice(0, 50);
-      await fetch(LEADERBOARD_URL, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scores: top50 })
-      });
-      this.scores = top50;
-      this.submitted = true;
-    } catch (e) { console.warn('Leaderboard submit failed:', e); }
+      const res = await fetch(LEADERBOARD_URL, { method: 'GET', headers: { 'Accept': 'application/json' } });
+      if (res.ok) {
+        const data = await res.json();
+        const scores = data.scores || [];
+        scores.push(entry);
+        scores.sort((a, b) => b.score - a.score);
+        const top50 = scores.slice(0, 50);
+        await fetch(LEADERBOARD_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ scores: top50 })
+        });
+        // Merge cloud back
+        const merged = [...this.scores];
+        for (const cs of top50) {
+          if (!merged.some(ls => ls.name === cs.name && ls.ts === cs.ts)) merged.push(cs);
+        }
+        merged.sort((a, b) => b.score - a.score);
+        this.scores = merged.slice(0, 50);
+        this._saveLocal();
+      }
+    } catch (e) { console.warn('Cloud sync failed (local saved):', e); }
   },
   
   getEntry() {
@@ -3475,9 +3516,29 @@ function drawTitle(dt) {
   genericButtons.push(startBtn);
   drawPixelButton(ctx, startBtn, isInsideRect(mouseX, mouseY, startBtn.x, startBtn.y, startBtn.w, startBtn.h));
 
-  const chalBtn = { x: W / 2 - 65, y: 420, w: 130, h: 30, text: '🏆 挑战码', action: 'challenge' };
+  const chalBtn = { x: W / 2 - 65, y: 420, w: 130, h: 30, text: '🎲 挑战码', action: 'challenge' };
   genericButtons.push(chalBtn);
   drawPixelButton(ctx, chalBtn, isInsideRect(mouseX, mouseY, chalBtn.x, chalBtn.y, chalBtn.w, chalBtn.h));
+
+  // V21.6: Leaderboard on title screen
+  if (Leaderboard.loaded && Leaderboard.scores.length > 0) {
+    const top5 = Leaderboard.scores.slice(0, 5);
+    const lbY = 460;
+    drawCardFrame(ctx, 20, lbY, W - 40, top5.length * 18 + 24, false);
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 9px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('🏆 排行榜', W / 2, lbY + 14);
+    for (let i = 0; i < top5.length; i++) {
+      const s = top5[i];
+      ctx.fillStyle = i === 0 ? COL.uiGold : i < 3 ? '#ddd' : '#999';
+      ctx.font = '8px "Courier New"'; ctx.textAlign = 'left';
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+      ctx.fillText(`${medal} ${s.name}`, 30, lbY + 30 + i * 18);
+      ctx.textAlign = 'right';
+      ctx.fillText(`第${s.gameNum}关 ${s.tds}TD ⭐${s.rating}`, W - 30, lbY + 30 + i * 18);
+    }
+  } else if (!Leaderboard.loaded) {
+    Leaderboard.fetch();
+  }
 
   // Challenge input overlay
   if (showChallengeInput) {
