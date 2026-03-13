@@ -403,7 +403,15 @@ const game = {
   comebackActive: false,
 };
 
-let qb = { accuracy: 70, arm: 60, readSpeed: 0, level: 1 };
+// V21.3: Real player names from Owen's team
+const QB_NAMES = ['科林', '短短', '孙乙', '辣宝', '王虎', '煮子'];
+const WR_NAMES = ['Allan', 'Bobo', '豌豆', 'Xu', 'Kenny', '麒麟', '纳德'];
+function pickRandomNames() {
+  const qbName = QB_NAMES[Math.floor(Math.random() * QB_NAMES.length)];
+  const shuffled = [...WR_NAMES].sort(() => Math.random() - 0.5);
+  return { qbName, wrNames: shuffled.slice(0, 4) };
+}
+let qb = { accuracy: 70, arm: 60, readSpeed: 0, level: 1, name: '科林' };
 let wrs = [
   { id: 0, name: '王牌', spd: 60, cat: 65, rte: 60, lvl: 1, num: 81 },
   { id: 1, name: '闪击', spd: 55, cat: 60, rte: 65, lvl: 1, num: 88 },
@@ -3121,7 +3129,7 @@ function drawScoreBug() {
   ctx.fillText(String(game.gameScore.opponent), bX + 8, bY + 32);
 
   ctx.fillStyle = COL.parchment; ctx.font = 'bold 9px "Courier New"'; ctx.textAlign = 'right';
-  ctx.fillText('QB CHALLENGE', bX + bW - 8, bY + 14);
+  ctx.fillText(`QB ${qb.name || 'CHALLENGE'}`, bX + bW - 8, bY + 14);
   ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 14px "Courier New"';
   ctx.fillText(String(game.gameScore.player), bX + bW - 8, bY + 32);
 
@@ -4488,8 +4496,9 @@ function startNewGame() {
   game.starAbilityUsed = {}; game.disguisesLeft = 3; game.teamWrPicks = [0,0,0,0]; game.seasonRecord = [];
   game.iceFreezeUsed = false; game.betweenGamePhase = 'none';
   if (!SeedSystem.isChallenge) { game.mapSeed = Math.floor(Math.random()*100000); game.weatherSeed = Math.floor(Math.random()*100000); }
-  qb = { accuracy: 70 + legacyBonus, arm: 60, readSpeed: 0, level: 1 };
-  wrs = [ { id:0, name:'王牌', spd:60, cat:65, rte:60, lvl:1, num:81 }, { id:1, name:'闪击', spd:55, cat:60, rte:65, lvl:1, num:88 }, { id:2, name:'疾风', spd:65, cat:55, rte:55, lvl:1, num:13 }, { id:3, name:'铁塔', spd:50, cat:70, rte:60, lvl:1, num:84 } ];
+  const names = pickRandomNames();
+  qb = { accuracy: 70 + legacyBonus, arm: 60, readSpeed: 0, level: 1, name: names.qbName };
+  wrs = [ { id:0, name:names.wrNames[0], spd:60, cat:65, rte:60, lvl:1, num:81 }, { id:1, name:names.wrNames[1], spd:55, cat:60, rte:65, lvl:1, num:88 }, { id:2, name:names.wrNames[2], spd:65, cat:55, rte:55, lvl:1, num:13 }, { id:3, name:names.wrNames[3], spd:50, cat:70, rte:60, lvl:1, num:84 } ];
   relics = []; defenseBonus = 0; consecutiveCatches = 0; particles = [];
   fieldTexture = null; Camera.reset(); Replay.reset();
   TimeScale.target = 1; TimeScale.current = 1;
