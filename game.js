@@ -380,6 +380,7 @@ const game = {
   playCount: 0, driveYards: 0, drivePlays: 0, highlightTimer: 0,
   scoreAnimTarget: 0, scoreAnimCurrent: 0,
   motionUsed: false, motionResult: null, motionWRIndex: -1,
+  qbArmBonus: 0, // V20.7: QB arm strength bonus (0-15), increases with upgrades
   passType: 'touch', scrambleResult: null,
   tdCelebrationTimer: 0, replayActive: false, replayTimer: 0,
   seasonStats: { completions: 0, attempts: 0, yards: 0, tds: 0, ints: 0, sacks: 0, plays: [] },
@@ -2412,9 +2413,25 @@ function updateSimulation(dt) {
         const errorYard = (Math.random() - 0.5) * leadError;
         const errorLane = (Math.random() - 0.5) * leadError * 2;
 
+        // V20.7: QB arm range limit — base 40 yards, max 55 with upgrades
+        // Pressure reduces range (hard to throw deep under duress)
+        const baseArmRange = 40 + (game.qbArmBonus || 0); // qbArmBonus from upgrades, 0-15
+        const pressureRangePenalty = rushDistNow < 3 ? 10 : rushDistNow < 5 ? 5 : 0;
+        const maxThrowRange = Math.min(55, baseArmRange - pressureRangePenalty);
+        
+        let finalYard = baseYard + errorYard;
+        let finalLane = baseLane + errorLane;
+        const throwDist = Math.sqrt(Math.pow(finalYard - sim.qbPos.yard, 2) + Math.pow((finalLane - sim.qbPos.lane) * 0.42, 2));
+        if (throwDist > maxThrowRange) {
+          // Clamp to max range — ball falls short
+          const scale = maxThrowRange / throwDist;
+          finalYard = sim.qbPos.yard + (finalYard - sim.qbPos.yard) * scale;
+          finalLane = sim.qbPos.lane + (finalLane - sim.qbPos.lane) * scale;
+        }
+        
         sim.ballTarget = {
-          yard: baseYard + errorYard,
-          lane: Math.max(2, Math.min(58, baseLane + errorLane)),
+          yard: finalYard,
+          lane: Math.max(2, Math.min(58, finalLane)),
         };
 
         sim.qbAction = 'throw'; sim.wrActions[sim.chosenWR] = 'catch';
