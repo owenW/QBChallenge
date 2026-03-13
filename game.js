@@ -403,6 +403,74 @@ const game = {
   comebackActive: false,
 };
 
+// ============================================================
+// V21.4: ONLINE LEADERBOARD
+// ============================================================
+const LEADERBOARD_URL = 'https://jsonblob.com/api/jsonBlob/019ce6d9-2a71-7bbf-a98f-1714712bcfa8';
+const Leaderboard = {
+  scores: [],
+  loaded: false,
+  loading: false,
+  playerName: '',
+  inputActive: false,
+  submitted: false,
+  
+  async fetch() {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const res = await fetch(LEADERBOARD_URL);
+      const data = await res.json();
+      this.scores = (data.scores || []).sort((a, b) => b.score - a.score).slice(0, 50);
+      this.loaded = true;
+    } catch (e) { console.warn('Leaderboard fetch failed:', e); }
+    this.loading = false;
+  },
+  
+  async submit(entry) {
+    if (this.submitted) return;
+    try {
+      // GET current, merge, PUT back
+      const res = await fetch(LEADERBOARD_URL);
+      const data = await res.json();
+      const scores = data.scores || [];
+      scores.push(entry);
+      scores.sort((a, b) => b.score - a.score);
+      const top50 = scores.slice(0, 50);
+      await fetch(LEADERBOARD_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scores: top50 })
+      });
+      this.scores = top50;
+      this.submitted = true;
+    } catch (e) { console.warn('Leaderboard submit failed:', e); }
+  },
+  
+  getEntry() {
+    const rating = calculateQBRating();
+    return {
+      name: this.playerName || '匿名QB',
+      score: Math.round(game.score),
+      gameNum: game.gameNum,
+      wins: game.seasonRecord.filter(r => r.won).length,
+      tds: game.seasonStats.tds,
+      yards: game.seasonStats.yards,
+      rating: Math.round(rating * 10) / 10,
+      qb: qb.name || 'QB',
+      ts: Date.now()
+    };
+  },
+  
+  reset() {
+    this.playerName = '';
+    this.inputActive = false;
+    this.submitted = false;
+  }
+};
+// Fetch leaderboard on load
+Leaderboard.fetch();
+
 // V21.3: Real player names from Owen's team
 const QB_NAMES = ['科林', '短短', '孙乙', '辣宝', '王虎', '煮子'];
 const WR_NAMES = ['Allan', 'Bobo', '豌豆', 'Xu', 'Kenny', '麒麟', '纳德'];
@@ -4284,6 +4352,7 @@ function drawSeasonHighlights(isVictory) {
   const rating = calculateQBRating();
   if (!game._seasonEnded) {
     game._seasonEnded = true;
+    Leaderboard.fetch(); // Refresh leaderboard
     const stats = { completions: game.seasonStats.completions, attempts: game.seasonStats.attempts,
       yards: game.seasonStats.yards, tds: game.seasonStats.tds, ints: game.seasonStats.ints, rating, isChampion: isVictory };
     game.newMilestones = Career.endSeason(stats);
@@ -4308,11 +4377,60 @@ function drawSeasonHighlights(isVictory) {
     ctx.fillStyle = COL.uiGold; ctx.font = 'bold 10px "Courier New"'; ctx.textAlign = 'center'; ctx.fillText('🎉 新成就!', W / 2, 186);
     for (let i = 0; i < game.newMilestones.length; i++) { ctx.fillStyle = COL.parchment; ctx.font = '9px "Courier New"'; ctx.fillText(`${game.newMilestones[i].icon} ${game.newMilestones[i].label}`, W / 2, 202 + i * 14); }
   }
-  const cY = 220 + (game.newMilestones ? game.newMilestones.length * 14 : 0);
+  let cY = 220 + (game.newMilestones ? game.newMilestones.length * 14 : 0);
+  
+  // V21.4: Name input + Submit to leaderboard
+  genericButtons = [];
+  if (!Leaderboard.submitted) {
+    drawCardFrame(ctx, 30, cY, W - 60, 70, false);
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 9px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('📊 提交成绩到排行榜', W / 2, cY + 14);
+    // Name input box
+    const inputX = 50, inputY = cY + 22, inputW = W - 140, inputH = 24;
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(inputX, inputY, inputW, inputH);
+    ctx.strokeStyle = Leaderboard.inputActive ? COL.uiGold : '#555'; ctx.lineWidth = 1; ctx.strokeRect(inputX, inputY, inputW, inputH);
+    ctx.fillStyle = Leaderboard.playerName ? COL.parchment : '#666'; ctx.font = '11px "Courier New"'; ctx.textAlign = 'left';
+    const displayName = Leaderboard.playerName || '输入你的ID...';
+    ctx.fillText(displayName + (Leaderboard.inputActive && Math.floor(Date.now()/500)%2 ? '|' : ''), inputX + 6, inputY + 16);
+    // Submit button
+    const submitBtn = { x: inputX + inputW + 8, y: inputY, w: 70, h: inputH, text: '提交', action: 'submit_score' };
+    genericButtons.push(submitBtn);
+    drawPixelButton(ctx, submitBtn, isInsideRect(mouseX, mouseY, submitBtn.x, submitBtn.y, submitBtn.w, submitBtn.h));
+    // Click area for input
+    genericButtons.push({ x: inputX, y: inputY, w: inputW, h: inputH, text: '', action: 'focus_input', invisible: true });
+    cY += 78;
+  } else {
+    ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 9px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('✅ 成绩已提交！', W / 2, cY + 10);
+    cY += 20;
+  }
+  
+  // V21.4: Leaderboard display
+  if (Leaderboard.loaded && Leaderboard.scores.length > 0) {
+    drawCardFrame(ctx, 15, cY, W - 30, Math.min(Leaderboard.scores.length, 8) * 16 + 24, false);
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 9px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('🏆 排行榜 TOP 8', W / 2, cY + 14);
+    const top8 = Leaderboard.scores.slice(0, 8);
+    for (let i = 0; i < top8.length; i++) {
+      const s = top8[i];
+      const isMe = Leaderboard.submitted && s.name === Leaderboard.playerName && s.ts === Leaderboard.getEntry().ts;
+      ctx.fillStyle = i === 0 ? COL.uiGold : (isMe ? COL.uiGreen : '#aaa');
+      ctx.font = '8px "Courier New"'; ctx.textAlign = 'left';
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+      ctx.fillText(`${medal} ${s.name}`, 25, cY + 28 + i * 16);
+      ctx.textAlign = 'right';
+      ctx.fillText(`第${s.gameNum}关 ${s.tds}TD ${s.yards}码 ⭐${s.rating}`, W - 25, cY + 28 + i * 16);
+    }
+    cY += Math.min(top8.length, 8) * 16 + 30;
+  } else if (Leaderboard.loading) {
+    ctx.fillStyle = '#666'; ctx.font = '9px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('加载排行榜...', W / 2, cY + 14); cY += 24;
+  }
+  
+  // Challenge code + buttons
   drawCardFrame(ctx, 40, cY, W - 80, 42, false);
   ctx.fillStyle = COL.uiGold; ctx.font = 'bold 8px "Courier New"'; ctx.textAlign = 'center'; ctx.fillText('挑战码', W / 2, cY + 14);
   ctx.fillStyle = COL.parchment; ctx.font = 'bold 14px "Courier New"'; ctx.fillText(game.challengeSeedCode, W / 2, cY + 32);
-  genericButtons = [];
   const copyBtn = { x: W/2-110, y: cY+52, w: 100, h: 30, text: '📋 复制', action: 'copy_seed' };
   const restartBtn = { x: W/2+10, y: cY+52, w: 100, h: 30, text: '🔄 再来', action: 'restart' };
   genericButtons.push(copyBtn, restartBtn);
@@ -4464,8 +4582,26 @@ function handleClick(e) {
     case 'gameOver': case 'victory':
       for (const btn of genericButtons) {
         if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
-          if (btn.action === 'restart') startNewGame();
+          if (btn.action === 'restart') { Leaderboard.reset(); startNewGame(); }
           else if (btn.action === 'copy_seed') SeedSystem.copyToClipboard(game.challengeSeedCode);
+          else if (btn.action === 'focus_input') {
+            Leaderboard.inputActive = true;
+            // Use prompt for mobile keyboard support
+            const name = prompt('输入你的ID:', Leaderboard.playerName || '');
+            if (name !== null) Leaderboard.playerName = name.trim().slice(0, 12);
+            Leaderboard.inputActive = false;
+          }
+          else if (btn.action === 'submit_score') {
+            if (!Leaderboard.playerName) {
+              const name = prompt('输入你的ID:');
+              if (name) Leaderboard.playerName = name.trim().slice(0, 12);
+            }
+            if (Leaderboard.playerName) {
+              const entry = Leaderboard.getEntry();
+              Leaderboard.submit(entry);
+              Commentary.show(`${entry.name} 的成绩已提交！`, 3);
+            }
+          }
         }
       }
       break;
