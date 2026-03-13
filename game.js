@@ -1210,8 +1210,9 @@ const Camera = {
   shakeX: 0, shakeY: 0, shakeDecay: 0.9, tdPulseTimer: -1,
   update(dt) {
     // V20.3: Faster camera tracking during throw phase
-    const camSpeed = (sim && sim.phase === 'throw') ? 0.18 : 0.08;
-    const zoomSpeed = (sim && sim.phase === 'throw') ? 0.14 : 0.06;
+    const isThrow = sim && sim.phase === 'throw';
+    const camSpeed = isThrow ? 0.25 : 0.08;
+    const zoomSpeed = isThrow ? 0.18 : 0.06;
     this.x += (this.targetX - this.x) * camSpeed; this.y += (this.targetY - this.y) * camSpeed;
     this.zoom += (this.targetZoom - this.zoom) * zoomSpeed;
     this.shakeX *= this.shakeDecay; this.shakeY *= this.shakeDecay;
@@ -1228,7 +1229,7 @@ const Camera = {
     switch (phase) {
       case 'reading': case 'presnap': case 'choosing': this.targetZoom = 1.0; this.targetX = 0; this.targetY = 0; break;
       case 'motion': this.targetZoom = 1.03; break;
-      case 'throw': this.targetZoom = 1.25; if (sim && sim.ballTarget) { const ts = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane); this.targetY = (H/2 - ts.y) * 0.5; this.targetX = (W/2 - ts.x) * 0.3; } break;
+      case 'throw': this.targetZoom = 1.15; if (sim && sim.ballTarget) { const ts = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane); this.targetY = H/2 - ts.y; this.targetX = (W/2 - ts.x) * 0.6; } break;
       case 'catch': this.targetZoom = 1.12; if (sim && sim.wrPos && sim.chosenWR != null) { const ts = FIELD.toScreen(sim.wrPos[sim.chosenWR].yard, sim.wrPos[sim.chosenWR].lane); this.targetY = (H/2 - ts.y) * 0.4; } break;
       case 'td': this.tdPulseTimer = 0; break;
       case 'scramble': this.targetZoom = 1.15; break;
@@ -2510,13 +2511,13 @@ function updateSimulation(dt) {
       if (sim.ballTrail.length > 8) sim.ballTrail.shift();
 
       if (sim.throwProgress > 0.6) TimeScale.set(0.6, 0.3);
-      // V20.2: Camera tracks ball during flight with zoom
+      // V20.4: Camera centers on ball during flight
       if (sim.ballPos) {
         const bscr = FIELD.toScreen(sim.ballPos.yard, sim.ballPos.lane);
-        Camera.targetY = (H/2 - bscr.y) * 0.55;
-        Camera.targetX = (W/2 - bscr.x) * 0.3;
-        // Progressive zoom as ball approaches target
-        Camera.targetZoom = 1.2 + sim.throwProgress * 0.15; // 1.2 → 1.35
+        // Center ball on screen (full offset, not partial)
+        Camera.targetY = H/2 - bscr.y;
+        Camera.targetX = (W/2 - bscr.x) * 0.6; // less horizontal shift (field is narrow)
+        Camera.targetZoom = 1.15 + sim.throwProgress * 0.1; // gentle zoom 1.15 → 1.25
       }
       if (sim.throwProgress >= 1) {
         // V18.7: Check if WR is actually near the ball landing point
@@ -3588,25 +3589,8 @@ function drawReadingPhase(dt) {
   ctx.fillStyle = COL.uiAccent; ctx.fillRect(W / 2 - 75, H - 190, 150 * Math.min(1, game.readingTimer / rd), 3);
   ctx.restore();
 
-  // Motion button
+  // V20.4: Motion and Audible buttons removed
   genericButtons = [];
-  if (!game.motionUsed && motionAnimPhase === 'idle') {
-    const mb = { x: W - 120, y: H - 245, w: 110, h: 30, text: 'MOTION ➡', action: 'motion' };
-    genericButtons.push(mb);
-    drawPixelButton(ctx, mb, isInsideRect(mouseX, mouseY, mb.x, mb.y, mb.w, mb.h));
-  }
-  if (motionAnimPhase === 'result' && game.motionResult) {
-    const resText = game.motionResult === 'man' ? '🔴 MAN!' : '🟢 ZONE!';
-    const resColor = game.motionResult === 'man' ? COL.uiRed : COL.uiGreen;
-    drawPixelRect(ctx, W / 2 - 50, H - 260, 100, 22, COL.cardBg, resColor);
-    ctx.fillStyle = resColor; ctx.font = 'bold 10px "Courier New"'; ctx.textAlign = 'center';
-    ctx.fillText(resText, W / 2, H - 246);
-  }
-  if (game.audiblesLeft > 0) {
-    const ab = { x: 10, y: H - 245, w: 90, h: 24, text: `变阵(${game.audiblesLeft})`, action: 'audible' };
-    genericButtons.push(ab);
-    drawPixelButton(ctx, ab, isInsideRect(mouseX, mouseY, ab.x, ab.y, ab.w, ab.h));
-  }
   // Ice whistle button
   if (hasRelic('ice_whistle') && !game.iceFreezeUsed) {
     const ib = { x: 10, y: H - 215, w: 90, h: 24, text: '🧊 冰冻口哨', action: 'ice_whistle' };
