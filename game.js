@@ -2006,13 +2006,54 @@ function updateSimulation(dt) {
       if (sim.routeProgress >= 0.7) {
         sim.phase = 'throw'; sim.timer = 0;
         sim.ballPos = { yard: sim.qbPos.yard, lane: sim.qbPos.lane };
-        // Lead the receiver: throw to where WR will be, not where they are now
+        // V18.6: Lead the receiver — throw to where WR WILL BE when ball arrives
+        // Use route endpoint direction, not instantaneous velocity (handles turns correctly)
         const wrE = sim.wrEntities[sim.chosenWR];
-        const leadTime = game.passType === 'bullet' ? 0.15 : game.passType === 'touch' ? 0.35 : 0.6;
-        sim.ballTarget = {
-          yard: wrE.yard + wrE.vy * leadTime,
-          lane: Math.max(2, Math.min(58, wrE.lane + wrE.vl * leadTime)),
-        };
+        const wrRoute = currentPlay.offense.wrs[sim.chosenWR].route;
+        const routeEnd = getRouteEndpoint(currentPlay.offense.wrs[sim.chosenWR]);
+        
+        // WR's intended run direction (toward route endpoint)
+        const toEndY = routeEnd.yard - wrE.yard;
+        const toEndL = routeEnd.lane - wrE.lane;
+        const toEndDist = Math.sqrt(toEndY * toEndY + toEndL * toEndL);
+        
+        // Is WR still running or has stopped (static routes like curl/hitch)?
+        const isStaticRoute = (wrRoute === 'curl' || wrRoute === 'hitch') && toEndDist < 2;
+        
+        if (isStaticRoute || toEndDist < 0.5) {
+          // Static/settled WR — throw right to them
+          sim.ballTarget = { yard: wrE.yard, lane: wrE.lane };
+        } else {
+          // Moving WR — calculate where they'll be when ball arrives
+          // Step 1: WR run direction (normalized)
+          const runDirY = toEndY / toEndDist;
+          const runDirL = toEndL / toEndDist;
+          const wrSpeed = Math.min(wrE.maxSpeed, Math.sqrt(wrE.vy * wrE.vy + wrE.vl * wrE.vl) + wrE.accel * 0.3);
+          
+          // Step 2: Estimate ball flight time (iterative — ball target affects distance)
+          // Initial guess: throw to point ahead of WR
+          const ballSpeed = game.passType === 'bullet' ? PHYSICS.BALL_SPEED_BULLET
+            : game.passType === 'lob' ? PHYSICS.BALL_SPEED_LOB : PHYSICS.BALL_SPEED_TOUCH;
+          
+          // Iterate twice for better convergence
+          let leadYard = wrE.yard, leadLane = wrE.lane;
+          for (let iter = 0; iter < 2; iter++) {
+            const bdy = leadYard - sim.qbPos.yard;
+            const bdl = leadLane - sim.qbPos.lane;
+            const ballDist = Math.sqrt(bdy * bdy + bdl * bdl);
+            const flightTime = ballDist / ballSpeed;
+            // Where WR will be after flightTime seconds of running
+            const wrRunDist = wrSpeed * flightTime;
+            const actualRun = Math.min(wrRunDist, toEndDist); // don't run past route end
+            leadYard = wrE.yard + runDirY * actualRun;
+            leadLane = wrE.lane + runDirL * actualRun;
+          }
+          
+          sim.ballTarget = {
+            yard: leadYard,
+            lane: Math.max(2, Math.min(58, leadLane)),
+          };
+        }
         sim.qbAction = 'throw'; sim.wrActions[sim.chosenWR] = 'catch';
         sim.throwPowerTimer = 0.3; TimeScale.set(0.65, 0.5); Camera.setForPhase('throw');
         // Reset zone DB reaction timers so they react fresh to the throw
