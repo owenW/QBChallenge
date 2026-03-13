@@ -5,7 +5,8 @@
   "setting": {
     "es6": true,
     "minify": false,
-    "urlCheck": false
+    "urlCheck": false,
+    "minifyWXML": true
   },
   "compileType": "game",
   "libVersion": "3.3.0",
