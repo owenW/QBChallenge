@@ -5,23 +5,29 @@
 // V15: Playtested and tuned by world-class IFAF 5v5 QB
 // ============================================================
 
+// ============================================================
+// V22.2: Device-adaptive rendering (WeChat Mini Game best practice)
+// - Canvas at native device resolution for sharp text/graphics
+// - Design coordinates = device logical points (1 design px = 1 screen pt)
+// - ctx.scale(dpr) for high-DPI rendering
+// ============================================================
 const canvas = wx.createCanvas();
 const ctx = canvas.getContext('2d');
-const W = 480, H = 780;
-canvas.width = W; canvas.height = H;
-
-// WeChat Mini Game: touch coordinate scaling
 const _sysInfo = wx.getSystemInfoSync();
-let innerWidth = _sysInfo.windowWidth;
-let innerHeight = _sysInfo.windowHeight;
-let _touchScaleX = W / innerWidth;
-let _touchScaleY = H / innerHeight;
+const DPR = _sysInfo.pixelRatio || 2;
+const W = _sysInfo.windowWidth;   // device logical width (e.g. 393 on iPhone 17 Pro Max)
+const H = _sysInfo.windowHeight;  // device logical height (e.g. 852)
+canvas.width = W * DPR;
+canvas.height = H * DPR;
+
+// Touch coordinates are already in logical points on WeChat
+let _touchScaleX = 1;
+let _touchScaleY = 1;
 function resize() {
-  const si = wx.getSystemInfoSync();
-  innerWidth = si.windowWidth; innerHeight = si.windowHeight;
-  _touchScaleX = W / innerWidth; _touchScaleY = H / innerHeight;
+  // Canvas already sized, touch 1:1
+  _touchScaleX = 1; _touchScaleY = 1;
 }
-wx.onWindowResize(info => { innerWidth = info.windowWidth; innerHeight = info.windowHeight; _touchScaleX = W / innerWidth; _touchScaleY = H / innerHeight; });
+wx.onWindowResize(info => { _touchScaleX = 1; _touchScaleY = 1; });
 
 
 // ============================================================
@@ -162,7 +168,10 @@ const WR_COLORS = ['#5888c8', '#c8a840', '#48b870', '#c06888'];
 // FIELD COORDINATE SYSTEM
 // ============================================================
 const FIELD = {
-  left: 30, top: 80, width: 420, height: 440,
+  left: Math.round(W * 0.0625),      // 30/480 → proportional left margin
+  top: Math.round(H * 0.103),        // 80/780 → proportional top
+  width: Math.round(W * 0.875),      // 420/480 → proportional width
+  height: Math.round(H * 0.564),     // 440/780 → proportional height
   toScreen(yard, lane) {
     return { x: this.left + (lane / 60) * this.width, y: this.top + this.height - (yard / 50) * this.height };
   },
@@ -1458,8 +1467,9 @@ const Replay = {
 let vignetteCanvas = null;
 function generateVignette() {
   vignetteCanvas = wx.createCanvas();
-  vignetteCanvas.width = W; vignetteCanvas.height = H;
+  vignetteCanvas.width = W * DPR; vignetteCanvas.height = H * DPR;
   const vc = vignetteCanvas.getContext('2d');
+  vc.scale(DPR, DPR);
   const diag = Math.sqrt(W * W + H * H);
   const g = vc.createRadialGradient(W / 2, H / 2, diag * 0.35, W / 2, H / 2, diag * 0.8);
   g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.4)');
@@ -1678,8 +1688,9 @@ function drawPixelPlayer(c, x, y, team, num, action, frame, isQB, scale, starAur
 // ============================================================
 let fieldTexture = null;
 function generateFieldTexture() {
-  const c = wx.createCanvas(); c.width = W; c.height = H;
+  const c = wx.createCanvas(); c.width = W * DPR; c.height = H * DPR;
   const fx = c.getContext('2d');
+  fx.scale(DPR, DPR);
 
   // Dark background
   fx.fillStyle = '#12100e'; fx.fillRect(0, 0, W, H);
@@ -4792,6 +4803,8 @@ function gameLoop(timestamp) {
   if (game.gameClockRunning && (game.state === 'reading' || game.state === 'choosing' || game.state === 'simulation' || game.state === 'playResult')) {
     game.gameClock = Math.max(0, game.gameClock - dt);
   }
+  // DPR scaling: render at native resolution
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.clearRect(0, 0, W, H);
   if (screenShake.x !== 0 || screenShake.y !== 0) { ctx.save(); ctx.translate(Math.round(screenShake.x), Math.round(screenShake.y)); }
   if (!isLoading) {
