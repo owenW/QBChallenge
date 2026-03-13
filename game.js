@@ -357,7 +357,7 @@ function getTeamColors(teamId) {
 // ============================================================
 const game = {
   state: 'title', ballYardLine: 5, downs: { current: 1, max: 4 },
-  firstDownLine: 20, gotFirstDown: false, score: 0, // V15.1: 15yd first downs (IFAF 5v5 rules)
+  firstDownLine: 25, gotFirstDown: false, score: 0, // V16: midfield first down (25yd line)
   gameNum: 1, maxGames: 10, losses: 0, maxLosses: 3,
   animFrame: 0, animTimer: 0, time: 0, stress: 0, gold: 100,
   audiblesLeft: 1, weatherDebuff: 0, scoutReport: false,
@@ -378,8 +378,8 @@ const game = {
   newMilestones: [], challengeSeedCode: '',
   composureRecoveryBonus: 0, filmStudyFloorsLeft: 0, playBookExpanded: false,
   // V14 additions
-  gameScore: { player: 0, opponent: 0 }, quarter: 1, playsThisGame: 0,
-  maxPlaysPerGame: 12, // 12 plays per game (3 per quarter)
+  gameScore: { player: 0, opponent: 0 }, quarter: 1,
+  gameClock: 240, gameClockRunning: false, // V16: 4-minute real-time countdown
   starAbilityUsed: {}, disguisesLeft: 3, teamWrPicks: [0,0,0,0],
   betweenGamePhase: 'none', // 'none', 'map', 'event', 'shop', 'rest', 'training'
   seasonRecord: [], // array of { teamId, won }
@@ -1966,7 +1966,6 @@ function updateSimulation(dt) {
 function handlePlayResult() {
   const isTD = sim && sim.success && (game.ballYardLine + sim.yardsGained >= 50);
   game.seasonStats.attempts++;
-  game.playsThisGame++;
   if (sim && !sim.isSack) updateTrust(sim.chosenWR, sim.success ? 'complete' : 'incomplete');
 
   if (sim.isSack) {
@@ -1984,9 +1983,9 @@ function handlePlayResult() {
     // INT = opponent scores
     game.gameScore.opponent += 7;
     Commentary.teamComment(getCurrentTeam(), 'int');
-    if (game.playsThisGame >= game.maxPlaysPerGame) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
+    if (game.gameClock <= 0) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
     // Reset drive
-    game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 20;
+    game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
   } else if (sim.success) {
     consecutiveCatches++; game.seasonStats.completions++;
     const yards = sim.yardsGained;
@@ -2006,13 +2005,13 @@ function handlePlayResult() {
       game.gameScore.player += 7;
       reduceStress(10);
       // Reset for next drive
-      game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 20;
+      game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
       // V15: Opponent scoring with progression logic instead of pure RNG
       // Later games = better opponents, but not random coinflips
       var oppScoreChance = 0.15 + game.gameNum * 0.04; // 19% game 1 → 55% game 10
       if (game.gameScore.player > game.gameScore.opponent + 14) oppScoreChance += 0.15; // Comeback mechanic
       if (Math.random() < oppScoreChance) game.gameScore.opponent += 7;
-      if (game.playsThisGame >= game.maxPlaysPerGame) {
+      if (game.gameClock <= 0) {
         endCurrentGame(game.gameScore.player > game.gameScore.opponent);
         sim = null; return;
       }
@@ -2020,7 +2019,7 @@ function handlePlayResult() {
     } else {
       if (game.ballYardLine >= game.firstDownLine) {
         game.downs.current = 1;
-        game.firstDownLine = Math.min(50, game.firstDownLine + 15); // V15.1: 15yd first downs
+        game.firstDownLine = 25; // V16: midfield always
         addParticle(W / 2, 300, 'confetti', 12);
         Commentary.generate('first_down');
       } else {
@@ -2029,8 +2028,8 @@ function handlePlayResult() {
           // V15: Turnover on downs — opponent field goal chance based on field position
           var fgChance = game.ballYardLine > 30 ? 0.5 : 0.25; // Better field position = more likely FG
           if (Math.random() < fgChance) game.gameScore.opponent += 3;
-          game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 20;
-          if (game.playsThisGame >= game.maxPlaysPerGame) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
+          game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
+          if (game.gameClock <= 0) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
         }
       }
     }
@@ -2041,8 +2040,8 @@ function handlePlayResult() {
       // V15: Field position-based FG chance on incomplete 4th down turnover
       var fgChance2 = game.ballYardLine > 30 ? 0.45 : 0.2;
       if (Math.random() < fgChance2) game.gameScore.opponent += 3;
-      game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 20;
-      if (game.playsThisGame >= game.maxPlaysPerGame) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
+      game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
+      if (game.gameClock <= 0) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
     }
   }
   // V15.1: Store play result for display before nullifying sim
@@ -2053,14 +2052,14 @@ function handlePlayResult() {
       sackYards: sim.sackYards, chosenWR: sim.chosenWR
     };
   }
-  // V15.1: End game check — catches ALL paths (sack, incomplete, etc.) that might miss maxPlays
-  if (game.playsThisGame >= game.maxPlaysPerGame && game.state !== 'halftime') {
+  // V16: End game check — clock hits 0:00
+  if (game.gameClock <= 0 && game.state !== 'halftime') {
     endCurrentGame(game.gameScore.player > game.gameScore.opponent);
     sim = null; return;
   }
-  // V15.1: Halftime after play 6 regardless of outcome
-  if (game.playsThisGame === 6 && !game.halftimeShown) {
-    game.halftimeShown = true; game.state = 'halftime';
+  // V16: Halftime at 2:00 remaining (120s elapsed of 240s)
+  if (game.gameClock <= 120 && !game.halftimeShown) {
+    game.halftimeShown = true; game.gameClockRunning = false; game.state = 'halftime';
     SFX.play('halftime_whistle'); generateHalftimeOptions();
     sim = null; return;
   }
@@ -2236,7 +2235,8 @@ function drawScoreBug() {
 
   // Quarter & play count
   ctx.fillStyle = '#888'; ctx.font = '8px "Courier New"';
-  ctx.fillText(`第${game.gameNum}场 · ${game.playsThisGame}/${game.maxPlaysPerGame}档`, W / 2, bY + 38);
+  const _cm = Math.floor(game.gameClock / 60), _cs = Math.floor(game.gameClock % 60);
+  ctx.fillText(`第${game.gameNum}场 · ${_cm}:${String(_cs).padStart(2,'0')}`, W / 2, bY + 38);
 
   // Gold
   ctx.fillStyle = COL.uiGold; ctx.font = '8px "Courier New"'; ctx.textAlign = 'center';
@@ -3396,7 +3396,7 @@ function handleClick(e) {
     case 'betweenGame':
       for (const btn of genericButtons) {
         if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
-          if (btn.action === 'between_rest') { reduceStress(25); game.downs.current = 1; game.ballYardLine = 5; game.firstDownLine = 20; game.state = 'rest'; }
+          if (btn.action === 'between_rest') { reduceStress(25); game.downs.current = 1; game.ballYardLine = 5; game.firstDownLine = 25; game.state = 'rest'; }
           else if (btn.action === 'between_shop') { generateShop(); game.state = 'shop'; }
           else if (btn.action === 'between_event') { currentEvent = EVENTS[Math.floor(Math.random() * EVENTS.length)]; game.state = 'event'; }
           else if (btn.action === 'between_training') { game.state = 'training'; }
@@ -3451,6 +3451,7 @@ function handleClick(e) {
       for (const btn of genericButtons) {
         if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h) && btn.action.startsWith('halftime_')) {
           const idx = parseInt(btn.action.split('_')[1]); halftimeOptions[idx].apply(); addParticle(W/2,200,'confetti',15); SFX.play('level_up');
+          game.gameClockRunning = true;
           generatePlay(false, false); game.state = 'reading'; game.readingPhase = true; game.readingTimer = 0; motionAnimPhase = 'idle'; motionAnimTimer = 0; return;
         }
       }
@@ -3504,7 +3505,7 @@ function handleClick(e) {
 function startNewGame() {
   Career.load(); const legacyBonus = Career.getLegacyBonus();
   game.state = 'seasonMap'; game.ballYardLine = 5; game.downs = { current: 1, max: 4 };
-  game.firstDownLine = 20; game.score = 0;
+  game.firstDownLine = 25; game.score = 0;
   game.gameNum = 1; game.losses = 0; game.stress = 0; game.gold = 100;
   game.audiblesLeft = 1; game.weatherDebuff = 0; game.scoutReport = false;
   game.readingPhase = false; game.readingTimer = 0; game.weatherType = 'normal';
@@ -3518,7 +3519,7 @@ function startNewGame() {
   game.coverageTracker = { zone: 0, man: 0, blitz: 0 };
   game.newMilestones = []; game.challengeSeedCode = '';
   game.composureRecoveryBonus = 0; game.filmStudyFloorsLeft = 0; game.playBookExpanded = false;
-  game._seasonEnded = false; game.gameScore = { player: 0, opponent: 0 }; game.playsThisGame = 0;
+  game._seasonEnded = false; game.gameScore = { player: 0, opponent: 0 }; game.gameClock = 240; game.gameClockRunning = false;
   game.starAbilityUsed = {}; game.disguisesLeft = 3; game.teamWrPicks = [0,0,0,0]; game.seasonRecord = [];
   game.iceFreezeUsed = false; game.betweenGamePhase = 'none';
   if (!SeedSystem.isChallenge) { game.mapSeed = Math.floor(Math.random()*100000); game.weatherSeed = Math.floor(Math.random()*100000); }
@@ -3534,8 +3535,8 @@ function startNewGame() {
 }
 
 function startGame(gameIdx) {
-  game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 20;
-  game.playsThisGame = 0; game.gameScore = { player: 0, opponent: 0 };
+  game.ballYardLine = 5; game.downs.current = 1; game.firstDownLine = 25;
+  game.gameClock = 240; game.gameClockRunning = true; game.gameScore = { player: 0, opponent: 0 };
   game.halftimeShown = false; game.teamWrPicks = [0,0,0,0];
   game.audiblesLeft = 1 + (hasRelic('audible_master') ? 1 : 0);
   game.iceFreezeUsed = false; game.disguisesLeft = 3;
@@ -3571,6 +3572,9 @@ function gameLoop(timestamp) {
   game.time += dt; game.animTimer += dt;
   if (game.animTimer > 0.12) { game.animFrame = (game.animFrame + 1) % 8; game.animTimer = 0; }
   updateParticles(dt); updateShake(); Camera.update(dt); Commentary.update(dt); Weather.update(dt);
+  if (game.gameClockRunning && (game.state === 'reading' || game.state === 'choosing' || game.state === 'passType' || game.state === 'simulation' || game.state === 'playResult')) {
+    game.gameClock = Math.max(0, game.gameClock - dt);
+  }
   ctx.clearRect(0, 0, W, H);
   if (screenShake.x !== 0 || screenShake.y !== 0) { ctx.save(); ctx.translate(Math.round(screenShake.x), Math.round(screenShake.y)); }
   if (!isLoading) {
