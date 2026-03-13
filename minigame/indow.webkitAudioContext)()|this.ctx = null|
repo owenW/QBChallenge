@@ -1,1 +1,0 @@
-  init() { try { || window.webkitAudioContext)(); this.startCrowd(); } catch (e) { this.muted = true; } },
