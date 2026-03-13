@@ -406,9 +406,9 @@ const game = {
 // ============================================================
 // V21.4: ONLINE LEADERBOARD
 // ============================================================
-// V21.6: Leaderboard uses localStorage + optional cloud sync via jsonblob (with CORS workaround)
-const BLOB_ID = '019ce6d9-2a71-7bbf-a98f-1714712bcfa8';
-const LEADERBOARD_URL = `https://jsonblob.com/api/jsonBlob/${BLOB_ID}`;
+// V21.7: Leaderboard via KVdb.io (free, CORS-enabled)
+const KVDB_BUCKET = 'CYnFXZRuQfgP1jJNyh68pg';
+const LEADERBOARD_URL = `https://kvdb.io/${KVDB_BUCKET}/leaderboard`;
 const Leaderboard = {
   scores: [],
   loaded: false,
@@ -417,75 +417,53 @@ const Leaderboard = {
   inputActive: false,
   submitted: false,
   
-  _loadLocal() {
-    try {
-      const saved = localStorage.getItem('qb_leaderboard');
-      if (saved) { const data = JSON.parse(saved); this.scores = data.scores || []; }
-    } catch(e) {}
-  },
-  _saveLocal() {
-    try { localStorage.setItem('qb_leaderboard', JSON.stringify({ scores: this.scores })); } catch(e) {}
-  },
-  
   async fetch() {
     if (this.loading) return;
     this.loading = true;
-    this._loadLocal(); // Always load local first
     try {
-      const res = await fetch(LEADERBOARD_URL, { method: 'GET', headers: { 'Accept': 'application/json' } });
+      const res = await fetch(LEADERBOARD_URL);
       if (res.ok) {
-        const data = await res.json();
-        const cloud = (data.scores || []);
-        // Merge: combine local + cloud, dedupe by name+ts
-        const merged = [...this.scores];
-        for (const cs of cloud) {
-          if (!merged.some(ls => ls.name === cs.name && ls.ts === cs.ts)) merged.push(cs);
+        const text = await res.text();
+        if (text) {
+          const data = JSON.parse(text);
+          this.scores = (data.scores || []).sort((a, b) => b.score - a.score).slice(0, 50);
         }
-        merged.sort((a, b) => b.score - a.score);
-        this.scores = merged.slice(0, 50);
-        this._saveLocal();
       }
       this.loaded = true;
-    } catch (e) { 
-      console.warn('Cloud fetch failed, using local:', e);
-      this.loaded = this.scores.length > 0;
-    }
+    } catch (e) { console.warn('Leaderboard fetch failed:', e); }
     this.loading = false;
   },
   
   async submit(entry) {
     if (this.submitted) return;
-    // Always save locally first
-    this.scores.push(entry);
-    this.scores.sort((a, b) => b.score - a.score);
-    this.scores = this.scores.slice(0, 50);
-    this._saveLocal();
-    this.loaded = true;
     this.submitted = true;
-    // Try cloud sync in background
     try {
-      const res = await fetch(LEADERBOARD_URL, { method: 'GET', headers: { 'Accept': 'application/json' } });
-      if (res.ok) {
-        const data = await res.json();
-        const scores = data.scores || [];
-        scores.push(entry);
-        scores.sort((a, b) => b.score - a.score);
-        const top50 = scores.slice(0, 50);
-        await fetch(LEADERBOARD_URL, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ scores: top50 })
-        });
-        // Merge cloud back
-        const merged = [...this.scores];
-        for (const cs of top50) {
-          if (!merged.some(ls => ls.name === cs.name && ls.ts === cs.ts)) merged.push(cs);
+      // GET current scores, merge, PUT back
+      let existing = [];
+      try {
+        const res = await fetch(LEADERBOARD_URL);
+        if (res.ok) {
+          const text = await res.text();
+          if (text) { const data = JSON.parse(text); existing = data.scores || []; }
         }
-        merged.sort((a, b) => b.score - a.score);
-        this.scores = merged.slice(0, 50);
-        this._saveLocal();
-      }
-    } catch (e) { console.warn('Cloud sync failed (local saved):', e); }
+      } catch(e) {}
+      existing.push(entry);
+      existing.sort((a, b) => b.score - a.score);
+      const top50 = existing.slice(0, 50);
+      await fetch(LEADERBOARD_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scores: top50 })
+      });
+      this.scores = top50;
+      this.loaded = true;
+    } catch (e) { 
+      console.warn('Leaderboard submit failed:', e);
+      // At least show locally
+      this.scores.push(entry);
+      this.scores.sort((a, b) => b.score - a.score);
+      this.loaded = true;
+    }
   },
   
   getEntry() {
