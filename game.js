@@ -1690,10 +1690,14 @@ function calculateCatchProb(wrIdx, passType) {
   let prob = 40 + wr.cat * 0.4; // base 62-68% for cat 55-70
 
   // DISTANCE IS KING — find closest DB using actual physics positions
+  // Lane units scaled to yards (60 lanes ≈ 25 yards)
+  const LANE_TO_YARD_CP = 0.42;
   let closestDB = 999;
   for (let i = 0; i < 4; i++) {
     const db = sim.dbEntities[i];
-    const dist = Math.sqrt(Math.pow(db.yard - wrPos.yard, 2) + Math.pow(db.lane - wrPos.lane, 2));
+    const dy = db.yard - wrPos.yard;
+    const dl = (db.lane - wrPos.lane) * LANE_TO_YARD_CP;
+    const dist = Math.sqrt(dy * dy + dl * dl);
     if (dist < closestDB) closestDB = dist;
   }
 
@@ -1761,10 +1765,13 @@ function calculateINTChance(wrIdx, passType) {
   const wrPos = sim.wrEntities[wrIdx];
   const pt = passType || game.passType;
 
+  const LANE_TO_YARD_IC = 0.42;
   let closestDB = 999;
   for (let i = 0; i < 4; i++) {
     const db = sim.dbEntities[i];
-    const dist = Math.sqrt(Math.pow(db.yard - wrPos.yard, 2) + Math.pow(db.lane - wrPos.lane, 2));
+    const dy = db.yard - wrPos.yard;
+    const dl = (db.lane - wrPos.lane) * LANE_TO_YARD_IC;
+    const dist = Math.sqrt(dy * dy + dl * dl);
     if (dist < closestDB) closestDB = dist;
   }
 
@@ -2127,10 +2134,14 @@ function updateSimulation(dt) {
           const catchYards = Math.max(0, wrCatchYard - losY); // actual yards gained from catch point
 
           // YAC based on actual DB proximity at catch
+          // V18.5: Distance in real yards — lane units scaled (60 lanes ≈ 25 yards, so 1 lane ≈ 0.42 yards)
+          const LANE_TO_YARD = 0.42;
           let closestDBDist = 999;
           for (let i = 0; i < 4; i++) {
             const db = sim.dbEntities[i];
-            const dist = Math.sqrt(Math.pow(db.yard - wrCatchYard, 2) + Math.pow(db.lane - sim.wrEntities[sim.chosenWR].lane, 2));
+            const dyards = db.yard - wrCatchYard;
+            const dlanes = (db.lane - sim.wrEntities[sim.chosenWR].lane) * LANE_TO_YARD;
+            const dist = Math.sqrt(dyards * dyards + dlanes * dlanes);
             if (dist < closestDBDist) closestDBDist = dist;
           }
           const wrSpd = wrs[sim.chosenWR].spd;
@@ -2142,9 +2153,9 @@ function updateSimulation(dt) {
           else { yacYards = 0; sim.yacType = 'immediate_flag'; }
           if (hasRelic('ghost_boots')) yacYards = Math.floor(yacYards * 1.2);
           const maxYards = 50 - game.ballYardLine;
-          sim.routeYards = Math.min(catchYards, maxYards);
-          sim.yacYards = Math.min(yacYards, Math.max(0, maxYards - sim.routeYards));
-          sim.yardsGained = Math.min(sim.routeYards + sim.yacYards, maxYards);
+          sim.routeYards = Math.round(Math.min(catchYards, maxYards));
+          sim.yacYards = Math.round(Math.min(yacYards, Math.max(0, maxYards - sim.routeYards)));
+          sim.yardsGained = Math.round(Math.min(sim.routeYards + sim.yacYards, maxYards));
         }
         sim.phase = 'catch'; sim.timer = 0; TimeScale.set(0.5, 0.3);
         Camera.setForPhase('catch');
