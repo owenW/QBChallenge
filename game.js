@@ -607,26 +607,31 @@ const offenseFormations = [
 ];
 
 const defenseFormations = [
+  // Cover 1: 3 man DBs at LOS+6, free safety at LOS+10
   { name: 'Cover 1', desc: '人盯人+自由安全卫', coverType: 'man',
     getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: false },
-      dbs: [{ yard: losY + 5, lane: 10, role: 'man', coverIdx: 0 }, { yard: losY + 5, lane: 22, role: 'man', coverIdx: 1 },
-            { yard: losY + 5, lane: 38, role: 'man', coverIdx: 2 }, { yard: losY + 8, lane: 50, role: 'free', coverIdx: -1 }] }) },
+      dbs: [{ yard: losY + 6, lane: 10, role: 'man', coverIdx: 0 }, { yard: losY + 6, lane: 22, role: 'man', coverIdx: 1 },
+            { yard: losY + 6, lane: 38, role: 'man', coverIdx: 2 }, { yard: losY + 10, lane: 30, role: 'free', coverIdx: -1 }] }) },
+  // Cover 2: 2 deep safeties at LOS+10, 2 flat defenders at LOS+5
   { name: 'Cover 2', desc: '两深区域防守', coverType: 'zone',
     getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: false },
-      dbs: [{ yard: losY + 12, lane: 15, role: 'deep', coverIdx: -1 }, { yard: losY + 12, lane: 45, role: 'deep', coverIdx: -1 },
-            { yard: losY + 4, lane: 18, role: 'flat', coverIdx: -1 }, { yard: losY + 4, lane: 42, role: 'flat', coverIdx: -1 }] }) },
+      dbs: [{ yard: losY + 10, lane: 15, role: 'deep', coverIdx: -1 }, { yard: losY + 10, lane: 45, role: 'deep', coverIdx: -1 },
+            { yard: losY + 5, lane: 18, role: 'flat', coverIdx: -1 }, { yard: losY + 5, lane: 42, role: 'flat', coverIdx: -1 }] }) },
+  // Cover 3: 3 deep at LOS+10, 1 flat underneath at LOS+5
   { name: 'Cover 3', desc: '三深区域防守', coverType: 'zone',
     getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: false },
-      dbs: [{ yard: losY + 14, lane: 12, role: 'deep', coverIdx: -1 }, { yard: losY + 15, lane: 30, role: 'deep', coverIdx: -1 },
-            { yard: losY + 14, lane: 48, role: 'deep', coverIdx: -1 }, { yard: losY + 4, lane: 30, role: 'flat', coverIdx: -1 }] }) },
+      dbs: [{ yard: losY + 10, lane: 10, role: 'deep', coverIdx: -1 }, { yard: losY + 10, lane: 30, role: 'deep', coverIdx: -1 },
+            { yard: losY + 10, lane: 50, role: 'deep', coverIdx: -1 }, { yard: losY + 5, lane: 30, role: 'flat', coverIdx: -1 }] }) },
+  // Cover 4: all 4 at LOS+7 (quarters coverage)
   { name: 'Cover 4', desc: '四深区域防守', coverType: 'zone',
     getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: false },
-      dbs: [{ yard: losY + 11, lane: 10, role: 'deep', coverIdx: -1 }, { yard: losY + 11, lane: 24, role: 'deep', coverIdx: -1 },
-            { yard: losY + 11, lane: 38, role: 'deep', coverIdx: -1 }, { yard: losY + 11, lane: 52, role: 'deep', coverIdx: -1 }] }) },
+      dbs: [{ yard: losY + 7, lane: 8, role: 'deep', coverIdx: -1 }, { yard: losY + 7, lane: 23, role: 'deep', coverIdx: -1 },
+            { yard: losY + 7, lane: 37, role: 'deep', coverIdx: -1 }, { yard: losY + 7, lane: 52, role: 'deep', coverIdx: -1 }] }) },
+  // Man Blitz: all man DBs at LOS+5 (press), fast rusher
   { name: 'Man Blitz', desc: '全面突袭', coverType: 'blitz',
     getPositions: (losY) => ({ rusher: { yard: losY + 7, lane: 30, fast: true },
-      dbs: [{ yard: losY + 3, lane: 10, role: 'man', coverIdx: 0 }, { yard: losY + 3, lane: 22, role: 'man', coverIdx: 1 },
-            { yard: losY + 3, lane: 38, role: 'man', coverIdx: 2 }, { yard: losY + 3, lane: 50, role: 'man', coverIdx: 3 }] }) },
+      dbs: [{ yard: losY + 5, lane: 10, role: 'man', coverIdx: 0 }, { yard: losY + 5, lane: 22, role: 'man', coverIdx: 1 },
+            { yard: losY + 5, lane: 38, role: 'man', coverIdx: 2 }, { yard: losY + 5, lane: 50, role: 'man', coverIdx: 3 }] }) },
 ];
 
 const routePaths = {
@@ -1450,18 +1455,24 @@ function generatePlay(isElite, isBoss) {
   defense.idx = defIdx; defense.coverType = defForm.coverType;
 
   // Goal-line defense: when offense is within 10 yards of end zone (ballYardLine >= 40),
-  // defense compresses toward the goal line (yard 50), NOT inside the end zone
+  // all DBs stand ON the goal line (yard 50)
   if (game.ballYardLine >= 40) {
     const goalLine = 50;
-    const distToGoal = goalLine - losY;
     for (const db of defense.dbs) {
-      // Pull all DBs to goal line, don't let them go past it
-      db.yard = Math.min(goalLine, losY + Math.min(db.yard - losY, distToGoal));
-      // Tighter lane coverage near goal line
+      db.yard = goalLine; // DBs stand on goal line
       db.lane = db.lane * 0.8 + 30 * 0.2; // Compress toward center
     }
-    // Rusher also compresses but stays on defensive side
+    // Rusher stays at LOS+7
     defense.rusher.yard = Math.min(goalLine, defense.rusher.yard);
+  }
+  // First-down-line defense: DBs line up on the first down line (midfield situations)
+  if (game.ballYardLine >= 15 && game.ballYardLine < 40) {
+    const fdLine = losY + (game.firstDownLine - game.ballYardLine); // absolute yard of first down line
+    for (const db of defense.dbs) {
+      if (db.role !== 'free') { // free safety stays back
+        db.yard = Math.min(fdLine, db.yard); // don't go past first down line, but can be on it
+      }
+    }
   }
 
   // Double agent relic: 30% chance defense misaligns
@@ -1820,8 +1831,8 @@ function startSimulation(chosenWR) {
     coverIdx: db.coverIdx !== undefined ? db.coverIdx : -1,
     reactionTimer: db.role === 'man' ? 0.05 : PHYSICS.DB_REACTION_DELAY,
     hasReacted: false,
-    zoneAnchorYard: db.yard + 3, // zone: drift 3 yards forward from start
-    zoneAnchorLane: db.lane,
+    zoneAnchorYard: db.role === 'deep' ? getLOSYard() + 12 : db.role === 'flat' ? getLOSYard() + 5 : db.role === 'free' ? getLOSYard() + 15 : db.yard,
+    zoneAnchorLane: db.role === 'free' ? 30 : db.lane,
   }));
   const rushEntity = {
     yard: play.defense.rusher.yard, lane: play.defense.rusher.lane,
@@ -1914,7 +1925,7 @@ function updateSimulation(dt) {
         const targetLane = fl2 + (path[idx].lane - fl2) * t2;
         physicsMove(sim.wrEntities[i], targetYard, targetLane, sd);
       }
-      // V18: Physics-based DB movement — man reacts with delay, zone holds anchor
+      // V18.1: Physics-based DB movement — man reacts with delay, zone drops then reads
       for (let i = 0; i < 4; i++) {
         const db = sim.dbEntities[i];
         if (db.reactionTimer > 0) {
@@ -1924,8 +1935,47 @@ function updateSimulation(dt) {
           const tgt = sim.wrEntities[db.coverIdx];
           physicsMove(db, tgt.yard - 1.5, tgt.lane, sd);
         } else {
-          // Zone: physicsMove toward zone anchor, do NOT chase any specific WR
-          physicsMove(db, db.zoneAnchorYard, db.zoneAnchorLane, sd);
+          // Zone: drop to zone anchor first, then read and react
+          const inZone = Math.abs(db.yard - db.zoneAnchorYard) < 2 && Math.abs(db.lane - db.zoneAnchorLane) < 5;
+          if (!inZone) {
+            // Still dropping to zone position
+            physicsMove(db, db.zoneAnchorYard, db.zoneAnchorLane, sd);
+          } else {
+            // In zone — look for WRs entering this zone
+            let nearestWRInZone = -1, nearestDist = 999;
+            for (let wi = 0; wi < 4; wi++) {
+              const wrDist = Math.sqrt(
+                Math.pow(sim.wrEntities[wi].yard - db.yard, 2) +
+                Math.pow(sim.wrEntities[wi].lane - db.lane, 2)
+              );
+              if (wrDist < 8 && wrDist < nearestDist) {
+                nearestDist = wrDist; nearestWRInZone = wi;
+              }
+            }
+            if (nearestWRInZone >= 0) {
+              // WR in zone — trail them by 1 yard
+              const tgt = sim.wrEntities[nearestWRInZone];
+              physicsMove(db, tgt.yard - 1, tgt.lane, sd);
+            } else {
+              // No WR in zone — help toward nearest uncovered WR
+              let helpWR = -1, helpDist = 999;
+              for (let wi = 0; wi < 4; wi++) {
+                const hasCoverage = sim.dbEntities.some((odb, odi) =>
+                  odi !== i && odb.role === 'man' && odb.coverIdx === wi
+                );
+                if (!hasCoverage) {
+                  const d = Math.sqrt(Math.pow(sim.wrEntities[wi].yard - db.yard, 2) + Math.pow(sim.wrEntities[wi].lane - db.lane, 2));
+                  if (d < helpDist) { helpDist = d; helpWR = wi; }
+                }
+              }
+              if (helpWR >= 0 && helpDist < 15) {
+                physicsMove(db, sim.wrEntities[helpWR].yard, sim.wrEntities[helpWR].lane, sd);
+              } else {
+                // Hold zone position
+                physicsMove(db, db.zoneAnchorYard, db.zoneAnchorLane, sd);
+              }
+            }
+          }
         }
       }
       const rs = currentPlay.rushFast ? 0.05 : 0.03;
@@ -1954,7 +2004,13 @@ function updateSimulation(dt) {
       if (sim.routeProgress >= 0.7) {
         sim.phase = 'throw'; sim.timer = 0;
         sim.ballPos = { yard: sim.qbPos.yard, lane: sim.qbPos.lane };
-        sim.ballTarget = { yard: sim.wrEntities[sim.chosenWR].yard, lane: sim.wrEntities[sim.chosenWR].lane };
+        // Lead the receiver: throw to where WR will be, not where they are now
+        const wrE = sim.wrEntities[sim.chosenWR];
+        const leadTime = game.passType === 'bullet' ? 0.15 : game.passType === 'touch' ? 0.35 : 0.6;
+        sim.ballTarget = {
+          yard: wrE.yard + wrE.vy * leadTime,
+          lane: Math.max(2, Math.min(58, wrE.lane + wrE.vl * leadTime)),
+        };
         sim.qbAction = 'throw'; sim.wrActions[sim.chosenWR] = 'catch';
         sim.throwPowerTimer = 0.3; TimeScale.set(0.65, 0.5); Camera.setForPhase('throw');
         // Reset zone DB reaction timers so they react fresh to the throw
@@ -2014,11 +2070,16 @@ function updateSimulation(dt) {
       const throwDuration = game.passType === 'bullet' ? 0.4 : game.passType === 'lob' ? 0.7 : 0.55;
       sim.throwProgress = Math.min(1, sim.timer / throwDuration);
       sim.throwPowerTimer -= sd;
-      // V18: WRs continue running routes using physics
+      // V18.1: Thrown-to WR adjusts to meet the ball; others continue routes
       for (let i = 0; i < 4; i++) {
-        const path = routePaths[currentPlay.offense.wrs[i].route](currentPlay.offense.wrs[i].yard, currentPlay.offense.wrs[i].lane);
-        const end = path[path.length - 1];
-        physicsMove(sim.wrEntities[i], end.yard, end.lane, sd);
+        if (i === sim.chosenWR) {
+          // Run toward the ball target (lead point), not route end
+          physicsMove(sim.wrEntities[i], sim.ballTarget.yard, sim.ballTarget.lane, sd);
+        } else {
+          const path = routePaths[currentPlay.offense.wrs[i].route](currentPlay.offense.wrs[i].yard, currentPlay.offense.wrs[i].lane);
+          const end = path[path.length - 1];
+          physicsMove(sim.wrEntities[i], end.yard, end.lane, sd);
+        }
       }
       // V18: All DBs react to ball — physicsMove toward catch target at realistic speed
       for (let i = 0; i < 4; i++) {
@@ -2033,9 +2094,7 @@ function updateSimulation(dt) {
           physicsMove(db, sim.ballTarget.yard, sim.ballTarget.lane, sd);
         }
       }
-      // Continuously update ball target to track chosen WR's current position
-      sim.ballTarget.yard = sim.wrPos[sim.chosenWR].yard;
-      sim.ballTarget.lane = sim.wrPos[sim.chosenWR].lane;
+      // Ball flies to the lead point — do NOT track WR position after throw
       sim.ballPos.yard = sim.qbPos.yard + (sim.ballTarget.yard - sim.qbPos.yard) * sim.throwProgress;
       sim.ballPos.lane = sim.qbPos.lane + (sim.ballTarget.lane - sim.qbPos.lane) * sim.throwProgress;
       sim.ballTrail.push({ ...sim.ballPos }); if (sim.ballTrail.length > 8) sim.ballTrail.shift();
