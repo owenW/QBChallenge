@@ -1209,8 +1209,11 @@ const Camera = {
   x: 0, y: 0, zoom: 1.0, targetX: 0, targetY: 0, targetZoom: 1.0,
   shakeX: 0, shakeY: 0, shakeDecay: 0.9, tdPulseTimer: -1,
   update(dt) {
-    this.x += (this.targetX - this.x) * 0.08; this.y += (this.targetY - this.y) * 0.08;
-    this.zoom += (this.targetZoom - this.zoom) * 0.06;
+    // V20.3: Faster camera tracking during throw phase
+    const camSpeed = (sim && sim.phase === 'throw') ? 0.18 : 0.08;
+    const zoomSpeed = (sim && sim.phase === 'throw') ? 0.14 : 0.06;
+    this.x += (this.targetX - this.x) * camSpeed; this.y += (this.targetY - this.y) * camSpeed;
+    this.zoom += (this.targetZoom - this.zoom) * zoomSpeed;
     this.shakeX *= this.shakeDecay; this.shakeY *= this.shakeDecay;
     if (this.tdPulseTimer >= 0) {
       this.tdPulseTimer += dt;
@@ -2297,33 +2300,55 @@ function updateSimulation(dt) {
         const toEndL = routeEnd.lane - wrE.lane;
         const toEndDist = Math.sqrt(toEndY * toEndY + toEndL * toEndL);
 
-        // Is WR still running or has stopped (static routes like curl/hitch)?
-        const isStaticRoute = (wrRoute === 'curl' || wrRoute === 'hitch') && toEndDist < 2;
+        // V20.3: Determine if WR is on a "stop" route (curl, hitch, hook — WR sits at spot)
+        const stopRoutes = ['curl', 'hitch', 'hook', 'comeback'];
+        const isStopRoute = stopRoutes.includes(wrRoute);
 
         let baseYard, baseLane;
-        if (isStaticRoute || toEndDist < 0.5) {
-          // Static/settled WR — throw right to them
+        if (isStopRoute && toEndDist < 3) {
+          // Stop route WR has settled — throw to their feet
           baseYard = wrE.yard; baseLane = wrE.lane;
         } else {
-          // Moving WR — calculate where they'll be when ball arrives
-          const runDirY = toEndY / toEndDist;
-          const runDirL = toEndL / toEndDist;
-          const wrSpeed = Math.min(wrE.maxSpeed, Math.sqrt(wrE.vy * wrE.vy + wrE.vl * wrE.vl) + wrE.accel * 0.3);
+          // Moving WR — use max speed (not current speed) for lead prediction
+          // WR will keep running past route endpoint in same direction
+          const wrSpeed = wrE.maxSpeed; // assume full speed during ball flight
+          
+          // Run direction: if near route end, extend past it in same direction
+          let runDirY, runDirL;
+          if (toEndDist > 1) {
+            runDirY = toEndY / toEndDist;
+            runDirL = toEndL / toEndDist;
+          } else {
+            // WR at/past route end — use current velocity direction or last route segment
+            const curSpd = Math.sqrt(wrE.vy * wrE.vy + wrE.vl * wrE.vl);
+            if (curSpd > 0.5) {
+              runDirY = wrE.vy / curSpd;
+              runDirL = wrE.vl / curSpd;
+            } else {
+              // Fallback: use route end direction from start
+              const wrStart = currentPlay.offense.wrs[sim.chosenWR];
+              const dfy = routeEnd.yard - wrStart.yard;
+              const dfl = routeEnd.lane - wrStart.lane;
+              const dfd = Math.sqrt(dfy * dfy + dfl * dfl) || 1;
+              runDirY = dfy / dfd;
+              runDirL = dfl / dfd;
+            }
+          }
 
           const ballSpeed = game.passType === 'bullet' ? PHYSICS.BALL_SPEED_BULLET
             : game.passType === 'lob' ? PHYSICS.BALL_SPEED_LOB : PHYSICS.BALL_SPEED_TOUCH;
 
-          // Iterate twice for better convergence
+          // Iterate for convergence (ball target affects distance affects flight time)
           let leadYard = wrE.yard, leadLane = wrE.lane;
-          for (let iter = 0; iter < 2; iter++) {
+          for (let iter = 0; iter < 3; iter++) {
             const bdy = leadYard - sim.qbPos.yard;
             const bdl = leadLane - sim.qbPos.lane;
             const ballDist = Math.sqrt(bdy * bdy + bdl * bdl);
             const flightTime = ballDist / ballSpeed;
+            // WR runs at max speed for entire flight time (no toEndDist cap — WR keeps running)
             const wrRunDist = wrSpeed * flightTime;
-            const actualRun = Math.min(wrRunDist, toEndDist);
-            leadYard = wrE.yard + runDirY * actualRun;
-            leadLane = wrE.lane + runDirL * actualRun;
+            leadYard = wrE.yard + runDirY * wrRunDist;
+            leadLane = wrE.lane + runDirL * wrRunDist;
           }
           baseYard = leadYard; baseLane = leadLane;
         }
@@ -2423,8 +2448,28 @@ function updateSimulation(dt) {
       // All players continue moving during throw
       for (let i = 0; i < 4; i++) {
         if (i === sim.chosenWR) {
-          // Thrown-to WR runs toward the ball landing point
-          physicsMove(sim.wrEntities[i], sim.ballTarget.yard, sim.ballTarget.lane, sd);
+          // V20.3: WR keeps running their route direction (ball meets them, not WR chases ball)
+          // Only adjust toward ball if it's significantly off their path
+          const wrEnt = sim.wrEntities[i];
+          const toBallY = sim.ballTarget.yard - wrEnt.yard;
+          const toBallL = sim.ballTarget.lane - wrEnt.lane;
+          const toBallDist = Math.sqrt(toBallY * toBallY + toBallL * toBallL);
+          if (toBallDist > 2) {
+            // Ball is off the WR's path — WR adjusts slightly toward ball
+            // Blend: 70% continue route direction, 30% toward ball
+            const routeEnd2 = getRouteEndpoint(currentPlay.offense.wrs[i]);
+            const toEndY2 = routeEnd2.yard - wrEnt.yard;
+            const toEndL2 = routeEnd2.lane - wrEnt.lane;
+            const toEndD2 = Math.sqrt(toEndY2 * toEndY2 + toEndL2 * toEndL2) || 1;
+            const blendTarget = {
+              yard: wrEnt.yard + (toEndY2/toEndD2) * 5 * 0.7 + toBallY/toBallDist * 5 * 0.3,
+              lane: wrEnt.lane + (toEndL2/toEndD2) * 5 * 0.7 + toBallL/toBallDist * 5 * 0.3,
+            };
+            physicsMove(wrEnt, blendTarget.yard, blendTarget.lane, sd);
+          } else {
+            // Ball is on WR's path — just keep running toward ball (catches in stride)
+            physicsMove(wrEnt, sim.ballTarget.yard, sim.ballTarget.lane, sd);
+          }
         } else {
           const path = routePaths[currentPlay.offense.wrs[i].route](currentPlay.offense.wrs[i].yard, currentPlay.offense.wrs[i].lane);
           const end = path[path.length - 1];
