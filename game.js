@@ -2259,59 +2259,83 @@ function updateSimulation(dt) {
           }
         }
       }
-      // V18.1: Physics-based DB movement — man reacts with delay, zone drops then reads
+      // V21: Realistic CB/Safety technique — backpedal first, never let WR behind
+      const losY = getLOSYard();
       for (let i = 0; i < 4; i++) {
         const db = sim.dbEntities[i];
+        // Sync visual positions from physics
+        sim.dbPos[i].yard = db.yard;
+        sim.dbPos[i].lane = db.lane;
+        
         if (db.reactionTimer > 0) {
           db.reactionTimer -= sd;
-        } else if (db.role === 'man' && db.coverIdx >= 0) {
-          // V20.2: Man DB tries to stay even with WR (not trailing behind)
-          // DB speed (7.5) vs WR speed (8.0) creates natural separation over time
-          const tgt = sim.wrEntities[db.coverIdx];
-          physicsMove(db, tgt.yard, tgt.lane, sd);
+          // During reaction delay: backpedal (retreat toward end zone), don't stand still
+          physicsMove(db, db.yard + 2, db.lane, sd);
+          continue;
+        }
+        
+        if (db.role === 'man' && db.coverIdx >= 0) {
+          // === MAN COVERAGE: Mirror WR, NEVER let them behind you ===
+          const wr = sim.wrEntities[db.coverIdx];
+          const wrBehindDB = wr.yard > db.yard; // WR is deeper than DB (behind DB)
+          
+          if (wrBehindDB) {
+            // CRITICAL: WR got behind — sprint to catch up, match their depth + stay between WR and endzone
+            physicsMove(db, wr.yard + 1, wr.lane, sd); // get 1 yard deeper than WR
+          } else {
+            // DB is deeper or even — backpedal while mirroring WR's lane
+            // Stay 1-2 yards deeper than WR (cushion), match their lateral movement
+            const cushion = 1.5;
+            const targetYard = Math.max(wr.yard + cushion, db.yard); // never move toward LOS
+            physicsMove(db, targetYard, wr.lane, sd);
+          }
         } else {
-          // Zone: drop to zone anchor first, then read and react
-          const inZone = Math.abs(db.yard - db.zoneAnchorYard) < 2 && Math.abs(db.lane - db.zoneAnchorLane) < 5;
-          if (!inZone) {
-            // Still dropping to zone position
+          // === ZONE COVERAGE: Drop to zone, read QB, react to WR entering zone ===
+          // Phase 1: Backpedal to zone depth (ALWAYS retreat first)
+          const atZoneDepth = db.yard >= db.zoneAnchorYard - 1;
+          
+          if (!atZoneDepth) {
+            // Backpedal to zone — move away from LOS
             physicsMove(db, db.zoneAnchorYard, db.zoneAnchorLane, sd);
           } else {
-            // In zone — look for WRs entering this zone
-            let nearestWRInZone = -1, nearestDist = 999;
+            // Phase 2: In zone — scan for threats
+            // Find nearest WR that's a threat (coming toward or in this zone)
+            let threatWR = -1, threatScore = -999;
             for (let wi = 0; wi < 4; wi++) {
-              const wrDist = Math.sqrt(
-                Math.pow(sim.wrEntities[wi].yard - db.yard, 2) +
-                Math.pow(sim.wrEntities[wi].lane - db.lane, 2)
-              );
-              if (wrDist < 8 && wrDist < nearestDist) {
-                nearestDist = wrDist; nearestWRInZone = wi;
-              }
+              const wr = sim.wrEntities[wi];
+              const yardDist = Math.abs(wr.yard - db.yard);
+              const laneDist = Math.abs(wr.lane - db.lane) * 0.42;
+              const dist = Math.sqrt(yardDist * yardDist + laneDist * laneDist);
+              if (dist > 15) continue; // too far
+              
+              // Score: closer = higher threat, WR running deeper = higher threat
+              const depthThreat = wr.vy > 0 ? wr.vy * 2 : 0; // WR running toward endzone
+              const score = 15 - dist + depthThreat;
+              if (score > threatScore) { threatScore = score; threatWR = wi; }
             }
-            if (nearestWRInZone >= 0) {
-              // V20.2: Zone DB matches WR position (speed difference creates natural gap)
-              const tgt = sim.wrEntities[nearestWRInZone];
-              physicsMove(db, tgt.yard, tgt.lane, sd);
-            } else {
-              // No WR in zone — help toward nearest uncovered WR
-              let helpWR = -1, helpDist = 999;
-              for (let wi = 0; wi < 4; wi++) {
-                const hasCoverage = sim.dbEntities.some((odb, odi) =>
-                  odi !== i && odb.role === 'man' && odb.coverIdx === wi
-                );
-                if (!hasCoverage) {
-                  const d = Math.sqrt(Math.pow(sim.wrEntities[wi].yard - db.yard, 2) + Math.pow(sim.wrEntities[wi].lane - db.lane, 2));
-                  if (d < helpDist) { helpDist = d; helpWR = wi; }
-                }
-              }
-              if (helpWR >= 0 && helpDist < 15) {
-                physicsMove(db, sim.wrEntities[helpWR].yard, sim.wrEntities[helpWR].lane, sd);
+            
+            if (threatWR >= 0) {
+              const wr = sim.wrEntities[threatWR];
+              const wrBehindDB = wr.yard > db.yard;
+              if (wrBehindDB) {
+                // WR got past zone DB — chase, get deeper
+                physicsMove(db, wr.yard + 1, wr.lane, sd);
               } else {
-                // Hold zone position
-                physicsMove(db, db.zoneAnchorYard, db.zoneAnchorLane, sd);
+                // WR in front — mirror their lane, maintain depth advantage
+                const cushion = 1.0;
+                physicsMove(db, Math.max(wr.yard + cushion, db.zoneAnchorYard), wr.lane, sd);
               }
+            } else {
+              // No threat — hold zone position, ready to help
+              physicsMove(db, db.zoneAnchorYard, db.zoneAnchorLane, sd);
             }
           }
         }
+        
+        // HARD RULE: DB must never move toward LOS unless WR is between DB and LOS
+        // Exception: goal-line defense (endzone is behind DB)
+        const minYard = losY + 0.5;
+        if (db.yard < minYard) db.yard = minYard;
       }
       // Physics-based rusher movement (takes ~2-3 seconds to reach QB from 7 yards)
       if (!sim.rushEntity) {
@@ -2738,10 +2762,11 @@ function updateSimulation(dt) {
       // V17: YAC animation — WR runs after catch, nearest DB chases
       sim.yacTimer += sd;
       const yacProg = Math.min(1, sim.yacTimer / sim.yacDuration);
-      // Move WR forward
-      const yacWRTargetYard = sim.yacStartYard + (sim.yacTargetYard - sim.yacStartYard) * yacProg;
-      sim.wrPos[sim.chosenWR].yard += (yacWRTargetYard - sim.wrPos[sim.chosenWR].yard) * 0.12;
-      sim.wrPos[sim.chosenWR].lane += (sim.yacTargetLane - sim.wrPos[sim.chosenWR].lane) * 0.08;
+      // V21: WR runs at full speed during YAC — no lerp slowdown
+      const wrYacEntity = sim.wrEntities[sim.chosenWR];
+      physicsMove(wrYacEntity, sim.yacTargetYard, sim.yacTargetLane, sd);
+      sim.wrPos[sim.chosenWR].yard = wrYacEntity.yard;
+      sim.wrPos[sim.chosenWR].lane = wrYacEntity.lane;
       sim.wrActions[sim.chosenWR] = 'run';
       // Ball tracks WR
       sim.ballPos = { yard: sim.wrPos[sim.chosenWR].yard, lane: sim.wrPos[sim.chosenWR].lane };
