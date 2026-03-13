@@ -1,10 +1,4 @@
 // ============================================================
-// QB CHALLENGE — WeChat Mini Game (微信小游戏) Version
-// Converted from HTML5 Canvas game
-// V21.2: Feature-complete mini game port
-// ============================================================
-
-// ============================================================
 // QB CHALLENGE V15 — PIXEL ART ROGUELIKE (QB PLAYTESTED)
 // Slay the Spire meets NFL QB simulator
 // Pixel art style, unique defensive teams, deep rogue elements
@@ -14,25 +8,23 @@
 const canvas = wx.createCanvas();
 const ctx = canvas.getContext('2d');
 const W = 480, H = 780;
-// Set canvas to game resolution; mini game runtime scales to fill screen
 canvas.width = W; canvas.height = H;
 
-// Get system info for touch coordinate scaling
+// WeChat Mini Game: touch coordinate scaling
 const _sysInfo = wx.getSystemInfoSync();
 let innerWidth = _sysInfo.windowWidth;
 let innerHeight = _sysInfo.windowHeight;
-
-// touchScale: converts physical touch coords to game canvas coords
 let _touchScaleX = W / innerWidth;
 let _touchScaleY = H / innerHeight;
-
-function resize() {
-  innerWidth = wx.getSystemInfoSync().windowWidth;
-  innerHeight = wx.getSystemInfoSync().windowHeight;
-  _touchScaleX = W / innerWidth;
-  _touchScaleY = H / innerHeight;
-}
+function resize() { const si = wx.getSystemInfoSync(); innerWidth = si.windowWidth; innerHeight = si.windowHeight; _touchScaleX = W / innerWidth; _touchScaleY = H / innerHeight; }
 wx.onWindowResize(info => { innerWidth = info.windowWidth; innerHeight = info.windowHeight; _touchScaleX = W / innerWidth; _touchScaleY = H / innerHeight; });
+function resize() {
+  const r = W / H, mw = innerWidth, mh = innerHeight;
+  let w, h;
+  if (mw / mh > r) { h = mh; w = h * r; } else { w = mw; h = w / r; }
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+}
+
 
 // ============================================================
 // CAREER SAVE SYSTEM
@@ -420,7 +412,103 @@ const game = {
   comebackActive: false,
 };
 
-let qb = { accuracy: 70, arm: 60, readSpeed: 0, level: 1 };
+// ============================================================
+// V21.4: ONLINE LEADERBOARD
+// ============================================================
+// V21.7: Leaderboard via KVdb.io (free, CORS-enabled)
+const KVDB_BUCKET = 'CYnFXZRuQfgP1jJNyh68pg';
+const LEADERBOARD_URL = `https://kvdb.io/${KVDB_BUCKET}/leaderboard`;
+const Leaderboard = {
+  scores: [],
+  loaded: false,
+  loading: false,
+  playerName: '',
+  inputActive: false,
+  submitted: false,
+  
+  async fetch() {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const res = await fetch(LEADERBOARD_URL);
+      if (res.ok) {
+        const text = await res.text();
+        if (text) {
+          const data = JSON.parse(text);
+          this.scores = (data.scores || []).sort((a, b) => b.score - a.score).slice(0, 50);
+        }
+      }
+      this.loaded = true;
+    } catch (e) { console.warn('Leaderboard fetch failed:', e); }
+    this.loading = false;
+  },
+  
+  async submit(entry) {
+    if (this.submitted) return;
+    this.submitted = true;
+    try {
+      // GET current scores, merge, PUT back
+      let existing = [];
+      try {
+        const res = await fetch(LEADERBOARD_URL);
+        if (res.ok) {
+          const text = await res.text();
+          if (text) { const data = JSON.parse(text); existing = data.scores || []; }
+        }
+      } catch(e) {}
+      existing.push(entry);
+      existing.sort((a, b) => b.score - a.score);
+      const top50 = existing.slice(0, 50);
+      await fetch(LEADERBOARD_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scores: top50 })
+      });
+      this.scores = top50;
+      this.loaded = true;
+    } catch (e) { 
+      console.warn('Leaderboard submit failed:', e);
+      // At least show locally
+      this.scores.push(entry);
+      this.scores.sort((a, b) => b.score - a.score);
+      this.loaded = true;
+    }
+  },
+  
+  getEntry() {
+    const rating = calculateQBRating();
+    return {
+      name: this.playerName || '匿名QB',
+      score: Math.round(game.score),
+      gameNum: game.gameNum,
+      wins: game.seasonRecord.filter(r => r.won).length,
+      tds: game.seasonStats.tds,
+      yards: game.seasonStats.yards,
+      rating: Math.round(rating * 10) / 10,
+      qb: qb.name || 'QB',
+      ts: Date.now()
+    };
+  },
+  
+  reset() {
+    this.playerName = '';
+    this.inputActive = false;
+    this.submitted = false;
+    this._prompted = false;
+  }
+};
+// Fetch leaderboard on load
+Leaderboard.fetch();
+
+// V21.3: Real player names from Owen's team
+const QB_NAMES = ['科林', '短短', '孙乙', '辣宝', '王虎', '煮子'];
+const WR_NAMES = ['Allan', 'Bobo', '豌豆', 'Xu', 'Kenny', '麒麟', '纳德'];
+function pickRandomNames() {
+  const qbName = QB_NAMES[Math.floor(Math.random() * QB_NAMES.length)];
+  const shuffled = [...WR_NAMES].sort(() => Math.random() - 0.5);
+  return { qbName, wrNames: shuffled.slice(0, 4) };
+}
+let qb = { accuracy: 70, arm: 60, readSpeed: 0, level: 1, name: '科林' };
 let wrs = [
   { id: 0, name: '王牌', spd: 60, cat: 65, rte: 60, lvl: 1, num: 81 },
   { id: 1, name: '闪击', spd: 55, cat: 60, rte: 65, lvl: 1, num: 88 },
@@ -1348,7 +1436,7 @@ const Replay = {
     c.fillStyle = '#1c1612'; c.fillRect(0, 0, W, 26); c.fillRect(0, H - 26, W, 26);
     c.fillStyle = COL.uiGold; c.font = 'bold 15px "Courier New", monospace'; c.textAlign = 'center';
     c.fillText('◆ INSTANT REPLAY ◆', W / 2, 17);
-    c.fillStyle = 'rgba(200,180,140,0.5)'; c.font = '22px "Courier New"';
+    c.fillStyle = 'rgba(200,180,140,0.5)'; c.font = '11px "Courier New"';
     c.fillText('点击跳过', W / 2, H - 10);
     c.restore();
   },
@@ -1396,17 +1484,61 @@ const PostFX = {
 // ============================================================
 // WEB AUDIO (preserved from V11)
 // ============================================================
-// ============================================================
-// SFX — stubbed for WeChat Mini Game (audio handled differently)
-// ============================================================
 const SFX = {
-  muted: true, ctx: null, crowdGain: null,
-  init() { /* Audio stubbed for mini game */ },
-  play(type) { /* no-op */ },
-  startCrowd() { /* no-op */ },
-  stopCrowd() { /* no-op */ },
-  setCrowdIntensity(n) { /* no-op */ },
-  playTD() { /* no-op */ },
+  ctx: null, muted: false, crowdNode: null, crowdGain: null,
+  init() { this.muted = true; /* WeChat Mini Game: Web Audio API not available */ },
+  startCrowd() {
+    if (!this.ctx || this.crowdNode) return;
+    try {
+      const bufLen = this.ctx.sampleRate * 2;
+      const buf = this.ctx.createBuffer(1, bufLen, this.ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < bufLen; i++) d[i] = (Math.random() * 2 - 1) * 0.4;
+      this.crowdNode = this.ctx.createBufferSource();
+      this.crowdNode.buffer = buf; this.crowdNode.loop = true;
+      this.crowdGain = this.ctx.createGain(); this.crowdGain.gain.value = 0.012;
+      const filt = this.ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 400;
+      this.crowdNode.connect(filt); filt.connect(this.crowdGain);
+      this.crowdGain.connect(this.ctx.destination); this.crowdNode.start();
+    } catch (e) {}
+  },
+  crowdSwell(level) {
+    if (this.crowdGain) {
+      const tension = (game.ballYardLine / 50) * 0.25 + (game.downs.current >= 3 ? 0.15 : 0);
+      this.crowdGain.gain.setTargetAtTime(0.012 + (level + tension) * 0.035, this.ctx.currentTime, 0.3);
+    }
+  },
+  play(name) {
+    if (this.muted) return;
+    if (!this.ctx) this.init();
+    if (!this.ctx) return;
+    try {
+      const t = this.ctx.currentTime, ac = this.ctx;
+      switch (name) {
+        case 'snap': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 1000; o.type = 'sine'; g.gain.value = 0.04; g.gain.exponentialRampToValueAtTime(0.001, t + 0.08); o.start(t); o.stop(t + 0.08); break; }
+        case 'throw': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.setValueAtTime(200, t); o.frequency.linearRampToValueAtTime(600, t + 0.2); o.type = 'sine'; g.gain.value = 0.06; g.gain.exponentialRampToValueAtTime(0.001, t + 0.25); o.start(t); o.stop(t + 0.25); break; }
+        case 'bullet_throw': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.setValueAtTime(400, t); o.frequency.linearRampToValueAtTime(900, t + 0.08); o.type = 'sawtooth'; g.gain.value = 0.08; g.gain.exponentialRampToValueAtTime(0.001, t + 0.12); o.start(t); o.stop(t + 0.12); break; }
+        case 'lob_throw': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.setValueAtTime(120, t); o.frequency.linearRampToValueAtTime(350, t + 0.4); o.type = 'sine'; g.gain.value = 0.04; g.gain.exponentialRampToValueAtTime(0.001, t + 0.5); o.start(t); o.stop(t + 0.5); break; }
+        case 'motion_slide': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.setValueAtTime(300, t); o.frequency.linearRampToValueAtTime(700, t + 0.3); o.type = 'sine'; g.gain.value = 0.03; g.gain.exponentialRampToValueAtTime(0.001, t + 0.35); o.start(t); o.stop(t + 0.35); break; }
+        case 'scramble_dodge': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(50, t + 0.15); o.type = 'triangle'; g.gain.value = 0.12; g.gain.exponentialRampToValueAtTime(0.001, t + 0.18); o.start(t); o.stop(t + 0.18); break; }
+        case 'sack_impact': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.setValueAtTime(80, t); o.frequency.exponentialRampToValueAtTime(30, t + 0.3); o.type = 'triangle'; g.gain.value = 0.15; g.gain.exponentialRampToValueAtTime(0.001, t + 0.4); o.start(t); o.stop(t + 0.4); this.crowdSwell(-0.5); break; }
+        case 'catch': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 150; o.type = 'triangle'; g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12); o.start(t); o.stop(t + 0.12); this.crowdSwell(0.5); break; }
+        case 'miss': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.setValueAtTime(300, t); o.frequency.linearRampToValueAtTime(100, t + 0.4); o.type = 'sawtooth'; g.gain.value = 0.03; g.gain.exponentialRampToValueAtTime(0.001, t + 0.5); o.start(t); o.stop(t + 0.5); break; }
+        case 'td': { [220, 330, 440].forEach(freq => { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = freq; o.type = 'square'; g.gain.setValueAtTime(0.04, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5); o.start(t); o.stop(t + 0.5); }); this.crowdSwell(1); break; }
+        case 'whistle': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 2800; o.type = 'sine'; g.gain.setValueAtTime(0.04, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.4); o.start(t); o.stop(t + 0.4); break; }
+        case 'click': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 700; o.type = 'sine'; g.gain.value = 0.03; g.gain.exponentialRampToValueAtTime(0.001, t + 0.04); o.start(t); o.stop(t + 0.04); break; }
+        case 'audible': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 600; o.type = 'sine'; g.gain.value = 0.04; g.gain.exponentialRampToValueAtTime(0.001, t + 0.1); o.start(t); o.stop(t + 0.1); break; }
+        case 'commentary_ding': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 1200; o.type = 'sine'; g.gain.value = 0.03; g.gain.exponentialRampToValueAtTime(0.001, t + 0.12); o.start(t); o.stop(t + 0.12); break; }
+        case 'level_up': { [330, 415, 495, 660].forEach((freq, i) => { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = freq; o.type = 'sine'; g.gain.value = 0.04; g.gain.exponentialRampToValueAtTime(0.001, t + 0.15 * i + 0.25); o.start(t + 0.15 * i); o.stop(t + 0.15 * i + 0.25); }); break; }
+        case 'gameover': { [300, 260, 220, 160].forEach((freq, i) => { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = freq; o.type = 'triangle'; g.gain.value = 0.05; g.gain.exponentialRampToValueAtTime(0.001, t + 0.2 * i + 0.3); o.start(t + 0.2 * i); o.stop(t + 0.2 * i + 0.3); }); break; }
+        case 'stress_up': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.setValueAtTime(100, t); o.frequency.linearRampToValueAtTime(60, t + 0.2); o.type = 'triangle'; g.gain.value = 0.04; g.gain.exponentialRampToValueAtTime(0.001, t + 0.25); o.start(t); o.stop(t + 0.25); break; }
+        case 'champion': { [262, 330, 392, 523, 659, 784].forEach((freq, i) => { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = freq; o.type = 'square'; g.gain.setValueAtTime(0.03, t + i * 0.12); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.5); o.start(t + i * 0.12); o.stop(t + i * 0.12 + 0.5); }); break; }
+        case 'halftime_whistle': { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 2200; o.type = 'sine'; g.gain.setValueAtTime(0.06, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.8); o.start(t); o.stop(t + 0.8); break; }
+        case 'milestone': { [523, 659, 784, 1047].forEach((freq, i) => { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = freq; o.type = 'sine'; g.gain.setValueAtTime(0.05, t + i * 0.1); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.1 + 0.4); o.start(t + i * 0.1); o.stop(t + i * 0.1 + 0.4); }); break; }
+        case 'dc_intro': { [165, 220, 330].forEach((freq, i) => { const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = freq; o.type = 'triangle'; g.gain.setValueAtTime(0.05, t + i * 0.05); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.05 + 0.8); o.start(t + i * 0.05); o.stop(t + i * 0.05 + 0.8); }); break; }
+      }
+    } catch (e) {}
+  }
 };
 
 // ============================================================
@@ -3072,7 +3204,7 @@ function drawRadarChart(c, cx, cy, r, stats, labels, color) {
   c.strokeStyle = color; c.lineWidth = 1.5; c.beginPath();
   for (let i = 0; i <= n; i++) { const idx = i % n, a = -Math.PI / 2 + idx * as, v = Math.min(1, stats[idx] / 100); const px = cx + Math.cos(a) * r * v, py = cy + Math.sin(a) * r * v; i === 0 ? c.moveTo(px, py) : c.lineTo(px, py); }
   c.stroke();
-  c.fillStyle = '#aaa'; c.font = '13px "Courier New"'; c.textAlign = 'center';
+  c.fillStyle = '#aaa'; c.font = '10px "Courier New"'; c.textAlign = 'center';
   for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + i * as; c.fillText(labels[i], cx + Math.cos(a) * (r + 9), cy + Math.sin(a) * (r + 9)); }
 }
 
@@ -3088,37 +3220,45 @@ function drawScoreBug() {
 
   const team = getCurrentTeam();
   // Team name & score
-  ctx.fillStyle = COL.parchment; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'left';
+  ctx.fillStyle = COL.parchment; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'left';
   ctx.fillText(`${team.icon} ${team.name}`, bX + 8, bY + 14);
-  ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"';
+  ctx.fillStyle = COL.uiRed; ctx.font = 'bold 16px "Courier New"';
   ctx.fillText(String(game.gameScore.opponent), bX + 8, bY + 32);
 
-  ctx.fillStyle = COL.parchment; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'right';
-  ctx.fillText('QB CHALLENGE', bX + bW - 8, bY + 14);
-  ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 22px "Courier New"';
+  ctx.fillStyle = COL.parchment; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'right';
+  ctx.fillText(`QB ${qb.name || 'CHALLENGE'}`, bX + bW - 8, bY + 14);
+  ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 16px "Courier New"';
   ctx.fillText(String(game.gameScore.player), bX + bW - 8, bY + 32);
 
   // Down & distance
   const ydsToGo = game.firstDownLine >= 50 ? (50 - game.ballYardLine) : (game.firstDownLine - game.ballYardLine);
   const dt2 = `第${game.downs.current}档 & ${ydsToGo > 0 ? ydsToGo + '码' : 'GOAL'}`;
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'center';
   drawPixelRect(ctx, W / 2 - 40, bY + 6, 80, 16, 'rgba(212,168,64,0.15)', COL.uiGold);
   ctx.fillText(dt2, W / 2, bY + 17);
 
   // Clock
-  ctx.fillStyle = '#888'; ctx.font = '22px "Courier New"';
+  ctx.fillStyle = '#888'; ctx.font = '11px "Courier New"';
   const _cm = Math.floor(game.gameClock / 60), _cs = Math.floor(game.gameClock % 60);
   ctx.fillText(`${_cm}:${String(_cs).padStart(2,'0')}`, W / 2, bY + 32);
   
   // V21: Objective display
   if (game.currentObjective) {
-    ctx.fillStyle = COL.uiAccent; ctx.font = 'bold 13px "Courier New"';
+    ctx.fillStyle = COL.uiAccent; ctx.font = 'bold 10px "Courier New"';
     ctx.fillText(`🎯 ${game.currentObjective.name}`, W / 2, bY + 44);
   }
 
   // Gold
-  ctx.fillStyle = COL.uiGold; ctx.font = '22px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = '11px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText(`💰${game.gold}`, W / 2, bY + bH - 4);
+
+  // V21.5: Quit button (top-right corner of score bug)
+  const quitX = bX + bW - 36, quitY = bY + bH - 20, quitW = 32, quitH = 18;
+  ctx.fillStyle = 'rgba(180,60,60,0.5)'; ctx.fillRect(quitX, quitY, quitW, quitH);
+  ctx.fillStyle = '#aaa'; ctx.font = '10px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillText('退出', quitX + quitW/2, quitY + 13);
+  // Store quit button bounds for click detection
+  game._quitBtn = { x: quitX, y: quitY, w: quitW, h: quitH };
 
   ctx.restore();
 }
@@ -3131,8 +3271,8 @@ function drawPoiseRating() {
   const poise = 100 - game.stress;
   ctx.save();
   drawPixelRect(ctx, px - 2, py - 2, pw + 4, 54, COL.cardBg, COL.cardBorder);
-  ctx.fillStyle = '#888'; ctx.font = '13px "Courier New"'; ctx.textAlign = 'center';
-  ctx.fillText('POISE', px + pw/2, py + 7);
+  ctx.fillStyle = '#888'; ctx.font = '11px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillText('POISE', px + pw/2, py + 9);
   // Bar segments
   for (let s = 0; s < 10; s++) {
     const filled = poise >= (s + 1) * 10;
@@ -3140,9 +3280,9 @@ function drawPoiseRating() {
     ctx.fillStyle = filled ? segColor : 'rgba(232,220,200,0.1)';
     ctx.fillRect(px + 2 + s * 6, py + 15, 5, 10);
   }
-  ctx.fillStyle = col; ctx.font = 'bold 13px "Courier New"';
+  ctx.fillStyle = col; ctx.font = 'bold 14px "Courier New"';
   ctx.fillText(Math.round(poise), px + pw/2, py + 38);
-  ctx.font = '15px "Courier New"'; ctx.fillText(labels[level], px + pw/2, py + 50);
+  ctx.font = '11px "Courier New"'; ctx.fillText(labels[level], px + pw/2, py + 50);
   ctx.restore();
 }
 
@@ -3167,26 +3307,26 @@ function drawTopBar() {
     ctx.fillStyle = COL.parchment; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'left';
     ctx.fillText(currentPlay.offense.name, 10, 18);
     if ((hasRelic('film_study') || game.scoutReport || game.filmStudyFloorsLeft > 0 || hasRelic('defense_handbook')) && currentPlay) {
-      ctx.fillStyle = COL.uiRed; ctx.font = '22px "Courier New"';
+      ctx.fillStyle = COL.uiRed; ctx.font = '11px "Courier New"';
       ctx.fillText(`防守: ${currentPlay.defense.name}`, 10, 32);
     }
     const team = getCurrentTeam();
-    ctx.fillStyle = COL.uiOrange; ctx.font = '22px "Courier New"';
+    ctx.fillStyle = COL.uiOrange; ctx.font = '11px "Courier New"';
     ctx.fillText(`${team.icon} vs ${team.name}`, 10, 46);
   }
 
-  ctx.fillStyle = '#aaa'; ctx.font = '22px "Courier New"'; ctx.textAlign = 'right';
+  ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"'; ctx.textAlign = 'right';
   ctx.fillText(`ACC:${qb.accuracy} ARM:${qb.arm}`, W - 10, 18);
 
   const weather = Weather.getWeatherForGame(game.gameNum);
   if (weather !== 'day') {
     const wIcons = { dusk: '🌅', night: '🌙', rain: '🌧️', snow: '❄️' };
-    ctx.fillStyle = '#aaa'; ctx.font = '22px "Courier New"';
+    ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
     ctx.fillText(`${wIcons[weather] || ''} ${weather.toUpperCase()}`, W - 10, 32);
   }
 
   // Season record
-  ctx.fillStyle = '#888'; ctx.font = '13px "Courier New"'; ctx.textAlign = 'right';
+  ctx.fillStyle = '#888'; ctx.font = '10px "Courier New"'; ctx.textAlign = 'right';
   const wins = game.seasonRecord.filter(r => r.won).length;
   const ties = game.seasonRecord.filter(r => r.tied).length;
   const losses = game.seasonRecord.filter(r => !r.won && !r.tied).length;
@@ -3229,7 +3369,7 @@ function drawStarPlayer(x, y, team, action, frame, number, starData) {
   // Draw with aura
   drawPixelPlayer(ctx, x, y, team, number, action, frame, false, 1, starData.auraColor);
   // Star icon above
-  ctx.fillStyle = COL.uiGold; ctx.font = '14px serif'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = '11px serif'; ctx.textAlign = 'center';
   ctx.fillText('★', Math.round(x), Math.round(y) - 28);
 }
 
@@ -3298,7 +3438,7 @@ function drawRouteLines(alpha, animProgress) {
     if (prog >= 0.9) {
       const end = points[points.length - 1];
       drawPixelRect(ctx, end.x - 16, end.y - 16, 32, 12, 'rgba(28,22,18,0.8)', color);
-      ctx.fillStyle = color; ctx.font = '13px "Courier New"'; ctx.textAlign = 'center';
+      ctx.fillStyle = color; ctx.font = '10px "Courier New"'; ctx.textAlign = 'center';
       ctx.fillText(wr.route.toUpperCase(), Math.round(end.x), Math.round(end.y) - 8);
     }
     ctx.restore();
@@ -3323,11 +3463,11 @@ function drawTitle(dt) {
   const pulse = Math.sin(titleAnim.timer * 2) * 0.1 + 0.9;
   ctx.fillStyle = COL.parchment; ctx.font = 'bold 34px "Courier New", monospace';
   ctx.fillText('QB CHALLENGE', W / 2, 75);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"';
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 16px "Courier New"';
   ctx.fillText('◆ ROGUELIKE EDITION ◆', W / 2, 100);
   // Version badge
   drawPixelRect(ctx, W - 42, 8, 34, 16, 'rgba(212,168,64,0.2)', COL.uiGold);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"'; ctx.fillText('V15', W - 25, 19);
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.fillText('V15', W - 30, 19);
   ctx.restore();
 
   ctx.strokeStyle = 'rgba(232,220,200,0.15)'; ctx.lineWidth = 1;
@@ -3337,14 +3477,14 @@ function drawTitle(dt) {
   if (Career.data && Career.data.seasons > 0) {
     ctx.save();
     drawCardFrame(ctx, 20, 122, W - 40, 70, false);
-    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText('生涯数据', W / 2, 136);
-    ctx.fillStyle = '#aaa'; ctx.font = '22px "Courier New"';
+    ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
     ctx.fillText(`${Career.data.seasons}赛季 · ${Career.getCareerCompPct()}%命中 · ${Career.data.careerYards}码 · ${Career.data.careerTD}TD · ${Career.data.careerINT}INT`, W / 2, 152);
-    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 15px "Courier New"';
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 12px "Courier New"';
     ctx.fillText(`最佳评分: ${Career.data.bestRating.toFixed(1)} | 🏆×${Career.data.championships || 0}`, W / 2, 168);
     const legacy = Career.getLegacyBonus();
-    if (legacy > 0) { ctx.fillStyle = COL.uiGreen; ctx.font = '22px "Courier New"'; ctx.fillText(`传承加成: +${legacy} ACC`, W / 2, 182); }
+    if (legacy > 0) { ctx.fillStyle = COL.uiGreen; ctx.font = '11px "Courier New"'; ctx.fillText(`传承加成: +${legacy} ACC`, W / 2, 182); }
     ctx.restore();
   }
 
@@ -3353,7 +3493,7 @@ function drawTitle(dt) {
   drawPixelPlayer(ctx, W / 2 + 50, 260, 'offense', 81, 'run', titleAnim.spriteFrame, false, 1.2, null);
 
   // Feature list
-  ctx.fillStyle = 'rgba(232,220,200,0.4)'; ctx.font = '15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(232,220,200,0.4)'; ctx.font = '12px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('12支独特防守球队 · 明星球员系统 · 25+圣物', W / 2, 330);
   ctx.fillText('像素风美术 · 赛季制10场比赛 · 随机事件', W / 2, 346);
 
@@ -3363,18 +3503,38 @@ function drawTitle(dt) {
   genericButtons.push(startBtn);
   drawPixelButton(ctx, startBtn, isInsideRect(mouseX, mouseY, startBtn.x, startBtn.y, startBtn.w, startBtn.h));
 
-  const chalBtn = { x: W / 2 - 65, y: 420, w: 130, h: 30, text: '🏆 挑战码', action: 'challenge' };
+  const chalBtn = { x: W / 2 - 65, y: 420, w: 130, h: 30, text: '🎲 挑战码', action: 'challenge' };
   genericButtons.push(chalBtn);
   drawPixelButton(ctx, chalBtn, isInsideRect(mouseX, mouseY, chalBtn.x, chalBtn.y, chalBtn.w, chalBtn.h));
+
+  // V21.6: Leaderboard on title screen
+  if (Leaderboard.loaded && Leaderboard.scores.length > 0) {
+    const top5 = Leaderboard.scores.slice(0, 5);
+    const lbY = 460;
+    drawCardFrame(ctx, 20, lbY, W - 40, top5.length * 18 + 24, false);
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('🏆 排行榜', W / 2, lbY + 14);
+    for (let i = 0; i < top5.length; i++) {
+      const s = top5[i];
+      ctx.fillStyle = i === 0 ? COL.uiGold : i < 3 ? '#ddd' : '#999';
+      ctx.font = '11px "Courier New"'; ctx.textAlign = 'left';
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+      ctx.fillText(`${medal} ${s.name}`, 30, lbY + 30 + i * 18);
+      ctx.textAlign = 'right';
+      ctx.fillText(`第${s.gameNum}关 ${s.tds}TD ⭐${s.rating}`, W - 30, lbY + 30 + i * 18);
+    }
+  } else if (!Leaderboard.loaded) {
+    Leaderboard.fetch();
+  }
 
   // Challenge input overlay
   if (showChallengeInput) {
     ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
     drawCardFrame(ctx, 40, H / 2 - 70, W - 80, 140, true);
-    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 16px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText('输入挑战码', W / 2, H / 2 - 42);
     drawPixelRect(ctx, 60, H / 2 - 25, W - 120, 25, 'rgba(232,220,200,0.08)', COL.cardBorder);
-    ctx.fillStyle = COL.parchment; ctx.font = 'bold 22px "Courier New"';
+    ctx.fillStyle = COL.parchment; ctx.font = 'bold 16px "Courier New"';
     ctx.fillText(challengeInput || 'QBXXXXXXXX', W / 2, H / 2 - 10);
     const goBtn = { x: W / 2 - 55, y: H / 2 + 10, w: 45, h: 25, text: 'GO', action: 'challenge_go' };
     const cancelBtn = { x: W / 2 + 10, y: H / 2 + 10, w: 45, h: 25, text: '✕', action: 'challenge_cancel' };
@@ -3384,7 +3544,7 @@ function drawTitle(dt) {
     ctx.restore();
   }
 
-  ctx.fillStyle = 'rgba(232,220,200,0.25)'; ctx.font = '13px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(232,220,200,0.25)'; ctx.font = '10px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('V15 QB Tested · 12 Teams · Star Players · 25+ Relics', W / 2, H - 20);
   drawParticles();
 }
@@ -3399,12 +3559,12 @@ function drawSeasonMapScreen() {
   // Header
   drawPixelRect(ctx, 0, 0, W, 50, COL.uiBg, null);
   ctx.fillStyle = COL.uiAccent; ctx.fillRect(0, 48, W, 2);
-  ctx.fillStyle = COL.parchment; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.parchment; ctx.font = 'bold 16px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('赛季日程', W / 2, 20);
   const wins2 = game.seasonRecord.filter(r => r.won).length;
   const ties2 = game.seasonRecord.filter(r => r.tied).length;
   const ls = game.seasonRecord.filter(r => !r.won && !r.tied).length;
-  ctx.fillStyle = COL.uiGold; ctx.font = '15px "Courier New"';
+  ctx.fillStyle = COL.uiGold; ctx.font = '12px "Courier New"';
   ctx.fillText(`第${game.gameNum}场 · ${wins2}胜${ties2 ? ties2 + '平' : ''}${ls}负 · 💰${game.gold}`, W / 2, 38);
 
   if (!seasonMap) return;
@@ -3446,7 +3606,7 @@ function drawSeasonMapScreen() {
       const result = game.seasonRecord[g];
       if (result) {
         ctx.fillStyle = result.won ? COL.uiGreen : COL.uiRed;
-        ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'right';
+        ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'right';
         const resultLabel = result.won ? 'W' : result.tied ? 'T' : 'L';
         ctx.fillText(`${resultLabel} ${result.playerScore}-${result.oppScore}`, nodeX + nodeW - 8, ny + 4);
       }
@@ -3461,30 +3621,30 @@ function drawSeasonMapScreen() {
     ctx.fillStyle = diffColors; ctx.fillRect(nodeX + 6, ny - 4, 3, 8);
 
     ctx.fillStyle = isNext ? COL.parchment : '#888';
-    ctx.font = `${isNext ? 'bold ' : ''}9px "Courier New"`; ctx.textAlign = 'left';
+    ctx.font = `${isNext ? 'bold ' : ''}12px "Courier New"`; ctx.textAlign = 'left';
     ctx.fillText(`第${g + 1}场`, nodeX + 14, ny - 4);
     ctx.fillText(`${team.icon} ${team.name}`, nodeX + 14, ny + 8);
 
     if (isNext || isPlayed) {
-      ctx.fillStyle = '#888'; ctx.font = '13px "Courier New"'; ctx.textAlign = 'left';
+      ctx.fillStyle = '#888'; ctx.font = '10px "Courier New"'; ctx.textAlign = 'left';
       ctx.fillText(team.desc, nodeX + 14, ny + 18);
     }
 
     // Star player indicator
     if (!isFuture && team.stars) {
-      ctx.fillStyle = COL.uiGold; ctx.font = '13px "Courier New"'; ctx.textAlign = 'right';
+      ctx.fillStyle = COL.uiGold; ctx.font = '10px "Courier New"'; ctx.textAlign = 'right';
       ctx.fillText(`★${team.stars[0].name}`, nodeX + nodeW - 8, ny - 4);
     }
 
     ctx.globalAlpha = 1;
 
     // Game number label
-    ctx.fillStyle = 'rgba(232,220,200,0.2)'; ctx.font = '13px "Courier New"'; ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(232,220,200,0.2)'; ctx.font = '10px "Courier New"'; ctx.textAlign = 'right';
     ctx.fillText(`G${g + 1}`, nodeX - 4, ny + 3);
   }
 
   // Bottom: Loss counter
-  ctx.fillStyle = COL.uiRed; ctx.font = '15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiRed; ctx.font = '12px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText(`败场: ${game.losses}/${game.maxLosses}（3败赛季结束，平局不算败）`, W / 2, H - 20);
 
   drawParticles();
@@ -3504,14 +3664,14 @@ function drawBetweenGameScreen() {
   const team = getCurrentTeam();
   // Scouting report for next game
   drawCardFrame(ctx, 15, 55, W - 30, 80, false);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('下场对手侦查报告', W / 2, 70);
-  ctx.fillStyle = COL.parchment; ctx.font = 'bold 22px "Courier New"';
+  ctx.fillStyle = COL.parchment; ctx.font = 'bold 14px "Courier New"';
   ctx.fillText(`${team.icon} ${team.name}`, W / 2, 88);
-  ctx.fillStyle = '#aaa'; ctx.font = '22px "Courier New"';
+  ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
   ctx.fillText(team.desc, W / 2, 104);
   if (team.stars && team.stars[0]) {
-    ctx.fillStyle = COL.uiGold; ctx.font = '22px "Courier New"';
+    ctx.fillStyle = COL.uiGold; ctx.font = '11px "Courier New"';
     ctx.fillText(`★ 明星球员: #${team.stars[0].num} ${team.stars[0].name} — ${team.stars[0].desc}`, W / 2, 120);
   }
 
@@ -3541,9 +3701,9 @@ function drawBetweenGameScreen() {
       const hover = isInsideRect(mouseX, mouseY, bx, by, bw, btnH);
       drawCardFrame(ctx, bx, by, bw, btnH, hover);
       ctx.fillStyle = nt.color; ctx.fillRect(bx + 4, by + 4, 3, btnH - 8);
-      ctx.fillStyle = COL.parchment; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'left';
+      ctx.fillStyle = COL.parchment; ctx.font = 'bold 14px "Courier New"'; ctx.textAlign = 'left';
       ctx.fillText(nt.name, bx + 14, by + 22);
-      ctx.fillStyle = '#aaa'; ctx.font = '22px "Courier New"';
+      ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
       ctx.fillText(nt.desc, bx + 14, by + 40);
     }
 
@@ -3636,7 +3796,7 @@ function drawReadingPhase(dt) {
     const scr = FIELD.toScreen(currentPlay.offense.wrs[i].yard, wrLane);
     const isMotionWR = i === currentPlay.motionWR;
     drawPlayer(scr.x, scr.y, 'offense', isMotionWR && motionAnimPhase === 'moving' ? 'run' : 'idle', Math.floor(game.time * 4), wrs[i].num, false, isMotionWR && motionAnimPhase !== 'result');
-    ctx.fillStyle = WR_COLORS[i]; ctx.font = '13px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = WR_COLORS[i]; ctx.font = '10px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText(wrs[i].name, Math.round(scr.x), Math.round(scr.y) + 12);
   }
 
@@ -3649,7 +3809,7 @@ function drawReadingPhase(dt) {
   // Reading timer bar
   ctx.save();
   drawPixelRect(ctx, W / 2 - 80, H - 210, 160, 22, COL.cardBg, COL.cardBorder);
-  ctx.fillStyle = COL.parchment; ctx.font = '15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.parchment; ctx.font = '12px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('📖 阅读防守中...', W / 2, H - 196);
   ctx.fillStyle = 'rgba(232,220,200,0.15)'; ctx.fillRect(W / 2 - 75, H - 190, 150, 3);
   ctx.fillStyle = COL.uiAccent; ctx.fillRect(W / 2 - 75, H - 190, 150 * Math.min(1, game.readingTimer / rd), 3);
@@ -3702,7 +3862,7 @@ function drawWRCards(interactive) {
     drawPixelPlayer(ctx, cx2 + cW / 2, cy2 + 32, 'offense', wr.num, 'idle', Math.floor(game.time * 4), false, 0.8, null);
 
     // Name + trust
-    ctx.fillStyle = WR_COLORS[i]; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = WR_COLORS[i]; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText(`${wr.name} ${trust.emoji}`, cx2 + cW / 2, cy2 + 48);
 
     // Trust meter
@@ -3717,12 +3877,12 @@ function drawWRCards(interactive) {
       [wr.spd, wr.cat, wr.rte], ['SPD', 'CAT', 'RTE'], WR_COLORS[i]);
 
     // Route label
-    ctx.fillStyle = 'rgba(232,220,200,0.4)'; ctx.font = '15px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(232,220,200,0.5)'; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText(pw.route.toUpperCase(), cx2 + cW / 2, cy2 + 104);
 
     // Catch probability
     const pc = prob >= 60 ? COL.uiGreen : prob >= 35 ? COL.uiYellow : COL.uiRed;
-    ctx.fillStyle = pc; ctx.font = 'bold 22px "Courier New"';
+    ctx.fillStyle = pc; ctx.font = 'bold 16px "Courier New"';
     ctx.fillText(`${Math.round(prob)}%`, cx2 + cW / 2, cy2 + 122);
 
     // Best WR indicator
@@ -3759,7 +3919,7 @@ function drawChoosingScreen() {
   Camera.endTransform(); Weather.drawParticles(ctx);
 
   drawPixelRect(ctx, W / 2 - 120, H - 218, 240, 26, COL.cardBg, COL.cardBorder);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 14px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('👇 点击卡牌选择传球目标!', W / 2, H - 202);
 
   drawWRCards(true); drawTopBar(); drawPoiseRating(); drawRelicsBar(); drawScoreBug(); drawParticles();
@@ -3813,7 +3973,7 @@ function drawPassTypeScreen(dt) {
     ctx.fillStyle = t.color; ctx.fillRect(bx + 3, bY + 3, btnW - 6, 2);
     ctx.fillStyle = COL.parchment; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText(t.label, bx + btnW / 2, bY + 22);
-    ctx.fillStyle = '#888'; ctx.font = '22px "Courier New"'; ctx.fillText(t.desc, bx + btnW / 2, bY + 36);
+    ctx.fillStyle = '#888'; ctx.font = '11px "Courier New"'; ctx.fillText(t.desc, bx + btnW / 2, bY + 36);
   }
   ctx.restore();
   if (passTypeTimer >= timeLimit) { game.passType = 'touch'; triggerThrow('touch'); }
@@ -3852,7 +4012,7 @@ function drawLivePassTypeOverlay() {
   
   // Route progress indicator
   const routePct = Math.round(sim.routeProgress * 100);
-  ctx.fillStyle = '#aaa'; ctx.font = '22px "Courier New"';
+  ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
   ctx.fillText(`线路进度: ${routePct}%`, W / 2, H - 66);
   
   // Pass type buttons
@@ -3875,7 +4035,7 @@ function drawLivePassTypeOverlay() {
     ctx.fillStyle = t.color; ctx.fillRect(bx + 3 - pulse/2, bY + 3, btnW - 6 + pulse, 2);
     ctx.fillStyle = COL.parchment; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText(t.label, bx + btnW / 2, bY + 22);
-    ctx.fillStyle = '#888'; ctx.font = '22px "Courier New"'; ctx.fillText(t.desc, bx + btnW / 2, bY + 36);
+    ctx.fillStyle = '#888'; ctx.font = '11px "Courier New"'; ctx.fillText(t.desc, bx + btnW / 2, bY + 36);
   }
   ctx.restore();
 }
@@ -3889,10 +4049,10 @@ function drawScrambleUI() {
   ctx.save();
   const flash = Math.sin(game.time * 10) * 0.2 + 0.6;
   ctx.fillStyle = `rgba(200,168,64,${flash * 0.1})`; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 24px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('⚡ SCRAMBLE!', W / 2, H / 2 - 70);
   const sideText = sim.rusherSide === 'left' ? '← 左侧冲传' : sim.rusherSide === 'right' ? '右侧冲传 →' : '↑ 中路冲传 ↑';
-  ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"'; ctx.fillText(sideText, W / 2, H / 2 - 48);
+  ctx.fillStyle = COL.uiRed; ctx.font = 'bold 14px "Courier New"'; ctx.fillText(sideText, W / 2, H / 2 - 48);
   const timeLeft = Math.max(0, sim.scrambleTimer);
   ctx.fillStyle = 'rgba(232,220,200,0.15)'; ctx.fillRect(W / 2 - 70, H / 2 - 36, 140, 4);
   ctx.fillStyle = timeLeft / 1.8 > 0.3 ? COL.uiGold : COL.uiRed;
@@ -3967,7 +4127,7 @@ function drawSimulationScreen(dt) {
       ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
       ctx.fillText('✓', Math.round(ts.x) + 20, Math.round(ts.y) - 8);
     } else if (sim.isINT) {
-      ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+      ctx.fillStyle = COL.uiRed; ctx.font = 'bold 18px "Courier New"'; ctx.textAlign = 'center';
       ctx.fillText('INT!', Math.round(ts.x) + 20, Math.round(ts.y) - 8);
     } else {
       ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
@@ -3982,12 +4142,12 @@ function drawSimulationScreen(dt) {
     ctx.save();
     const tdAlpha = Math.min(1, sim.tdTimer / 0.3);
     ctx.globalAlpha = tdAlpha;
-    ctx.fillStyle = COL.parchment; ctx.font = 'bold 36px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = COL.parchment; ctx.font = 'bold 38px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText('TOUCHDOWN!', W / 2, H / 2 - 30);
-    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"';
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 18px "Courier New"';
     ctx.fillText(`+${sim.yardsGained} 码`, W / 2, H / 2 + 0);
     if (sim.yacYards > 5) {
-      ctx.fillStyle = '#88ddff'; ctx.font = '22px "Courier New"';
+      ctx.fillStyle = '#88ddff'; ctx.font = '14px "Courier New"';
       ctx.fillText(`接球后狂奔${sim.yacYards}码直接达阵！`, W / 2, H / 2 + 20);
     }
     ctx.restore();
@@ -3995,19 +4155,19 @@ function drawSimulationScreen(dt) {
 
   if (sim.phase === 'sackResult') {
     drawCardFrame(ctx, W / 2 - 100, H / 2 - 40, 200, 80, false);
-    ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = COL.uiRed; ctx.font = 'bold 20px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText('SACK!', W / 2, H / 2 - 10);
-    ctx.fillStyle = COL.parchment; ctx.font = '22px "Courier New"';
+    ctx.fillStyle = COL.parchment; ctx.font = '14px "Courier New"';
     ctx.fillText(`-${sim.sackYards || 5}码`, W / 2, H / 2 + 10);
-    ctx.fillStyle = '#888'; ctx.font = '22px "Courier New"'; ctx.fillText('点击继续', W / 2, H / 2 + 28);
+    ctx.fillStyle = '#888'; ctx.font = '11px "Courier New"'; ctx.fillText('点击继续', W / 2, H / 2 + 28);
   }
 
   if (sim.phase === 'result') {
     drawCardFrame(ctx, W / 2 - 120, H / 2 - 50, 240, 100, false);
     if (sim.success) {
-      ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+      ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 20px "Courier New"'; ctx.textAlign = 'center';
       ctx.fillText('COMPLETE!', W / 2, H / 2 - 25);
-      ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"';
+      ctx.fillStyle = COL.uiGold; ctx.font = 'bold 16px "Courier New"';
       ctx.fillText(`+${sim.yardsGained} 码`, W / 2, H / 2 - 5);
       if (sim.yacYards > 0) {
         ctx.fillStyle = '#88ddff'; ctx.font = '13px "Courier New"';
@@ -4020,14 +4180,14 @@ function drawSimulationScreen(dt) {
         ctx.fillText('接球即被拔旗', W / 2, H / 2 + 12);
       }
     } else if (sim.isINT) {
-      ctx.fillStyle = COL.uiPurple; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+      ctx.fillStyle = COL.uiPurple; ctx.font = 'bold 20px "Courier New"'; ctx.textAlign = 'center';
       ctx.fillText('INTERCEPTION!', W / 2, H / 2 - 20);
       ctx.fillStyle = '#aaa'; ctx.font = '13px "Courier New"'; ctx.fillText('对手得到7分', W / 2, H / 2 + 4);
     } else {
-      ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+      ctx.fillStyle = COL.uiRed; ctx.font = 'bold 20px "Courier New"'; ctx.textAlign = 'center';
       ctx.fillText('INCOMPLETE', W / 2, H / 2 - 20);
     }
-    ctx.fillStyle = '#888'; ctx.font = '22px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#888'; ctx.font = '11px "Courier New"'; ctx.textAlign = 'center';
     ctx.fillText('点击继续', W / 2, H / 2 + 36);
   }
 
@@ -4042,29 +4202,29 @@ function drawPlayResult() {
   ctx.textAlign = 'center';
   const lr = game.lastPlayResult;
   if (lr && lr.isSack) {
-    ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"';
+    ctx.fillStyle = COL.uiRed; ctx.font = 'bold 16px "Courier New"';
     ctx.fillText(`💥 SACK! -${lr.sackYards || 5}码`, W / 2, H / 2);
   } else if (lr && lr.isINT) {
-    ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"';
+    ctx.fillStyle = COL.uiRed; ctx.font = 'bold 16px "Courier New"';
     ctx.fillText('🏴 INTERCEPTION!', W / 2, H / 2);
   } else if (lr && lr.success) {
-    ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 22px "Courier New"';
+    ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 16px "Courier New"';
     ctx.fillText(`✅ 接球成功！+${lr.yardsGained}码`, W / 2, H / 2);
     if (lr.yacYards > 0) {
-      ctx.fillStyle = COL.uiGold; ctx.font = '22px "Courier New"';
+      ctx.fillStyle = COL.uiGold; ctx.font = '14px "Courier New"';
       const yacMsg = lr.yacType === 'wide_open' ? `接球后狂奔+${lr.yacYards}码！` :
                      lr.yacType === 'room_to_run' ? `接球后推进+${lr.yacYards}码` :
                      lr.yacType === 'flag_pull' ? `被拔旗，推进+${lr.yacYards}码` : '';
       ctx.fillText(yacMsg, W / 2, H / 2 + 16);
     }
   } else {
-    ctx.fillStyle = '#ff6644'; ctx.font = 'bold 22px "Courier New"';
+    ctx.fillStyle = '#ff6644'; ctx.font = 'bold 16px "Courier New"';
     ctx.fillText('❌ INCOMPLETE', W / 2, H / 2);
   }
   // Show field position
   ctx.fillStyle = COL.parchment; ctx.font = '13px "Courier New"';
   ctx.fillText(`球在 ${game.ballYardLine}码线 | 第${game.downs.current}档`, W / 2, H / 2 + 38);
-  ctx.fillStyle = '#888'; ctx.font = '15px "Courier New"';
+  ctx.fillStyle = '#888'; ctx.font = '12px "Courier New"';
   ctx.fillText('点击继续', W / 2, H / 2 + 55);
   drawTopBar(); drawPoiseRating(); drawRelicsBar(); drawScoreBug(); drawParticles(); Commentary.draw(ctx);
 }
@@ -4086,10 +4246,10 @@ function drawUpgradeScreen() {
     const bc = opt.type === 'qb' ? COL.uiGold : opt.type === 'wr' ? COL.uiBlue : opt.type === 'relic' ? COL.uiPurple : COL.uiGreen;
     drawCardFrame(ctx, cx, cy, cW2, cH2, ih);
     ctx.fillStyle = bc; ctx.fillRect(cx + 4, cy + 4, 3, cH2 - 8);
-    ctx.font = '18px serif'; ctx.textAlign = 'right'; ctx.fillText(opt.icon, cx + cW2 - 12, cy + 42);
+    ctx.font = '20px serif'; ctx.textAlign = 'right'; ctx.fillText(opt.icon, cx + cW2 - 12, cy + 42);
     ctx.fillStyle = COL.parchment; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'left';
     ctx.fillText(opt.name, cx + 14, cy + 35);
-    ctx.fillStyle = '#aaa'; ctx.font = '15px "Courier New"'; ctx.fillText(opt.desc, cx + 14, cy + 55);
+    ctx.fillStyle = '#aaa'; ctx.font = '12px "Courier New"'; ctx.fillText(opt.desc, cx + 14, cy + 55);
   }
   drawParticles();
 }
@@ -4097,7 +4257,7 @@ function drawUpgradeScreen() {
 function drawEventScreen() {
   if (!currentEvent) return;
   ctx.fillStyle = '#12100e'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = COL.uiPink; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiPink; ctx.font = 'bold 18px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('📜 随机事件', W / 2, 40);
   drawCardFrame(ctx, 30, 60, W - 60, 160, false);
   ctx.fillStyle = COL.parchment; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
@@ -4136,7 +4296,7 @@ function drawEventScreen() {
 
 function drawShopScreen() {
   ctx.fillStyle = '#12100e'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 18px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('🏪 商店', W / 2, 30); ctx.font = '13px "Courier New"'; ctx.fillText(`💰 ${game.gold} 金币`, W / 2, 50);
   genericButtons = [];
   for (let i = 0; i < shopItems.length; i++) {
@@ -4156,11 +4316,11 @@ function drawShopScreen() {
 
 function drawRestScreen() {
   ctx.fillStyle = '#12100e'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 18px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('💤 休息', W / 2, 100);
-  ctx.fillStyle = '#ccc'; ctx.font = '22px "Courier New"';
+  ctx.fillStyle = '#ccc'; ctx.font = '14px "Courier New"';
   ctx.fillText('在场边休息了一会儿...', W / 2, 140);
-  ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 22px "Courier New"'; ctx.fillText('压力 -25 😌', W / 2, 175);
+  ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 14px "Courier New"'; ctx.fillText('压力 -25 😌', W / 2, 175);
   genericButtons = [{ x: W / 2 - 60, y: 210, w: 120, h: 36, text: '继续', action: 'rest_ok' }];
   drawPixelButton(ctx, genericButtons[0], isInsideRect(mouseX, mouseY, genericButtons[0].x, genericButtons[0].y, 120, 36));
   drawParticles();
@@ -4168,7 +4328,7 @@ function drawRestScreen() {
 
 function drawTrainingScreen() {
   ctx.fillStyle = '#12100e'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = COL.uiBlue; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiBlue; ctx.font = 'bold 18px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('🏋️ 特训', W / 2, 40);
   ctx.fillStyle = '#ccc'; ctx.font = '13px "Courier New"'; ctx.fillText('选择一名WR进行强化训练', W / 2, 65);
   genericButtons = [];
@@ -4181,7 +4341,7 @@ function drawTrainingScreen() {
     drawPixelPlayer(ctx, btn.x + 30, btn.y + 28, 'offense', wr.num, 'idle', Math.floor(game.time * 4), false, 0.7, null);
     ctx.fillStyle = WR_COLORS[i]; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'left';
     ctx.fillText(wr.name, btn.x + 55, btn.y + 20);
-    ctx.fillStyle = '#aaa'; ctx.font = '22px "Courier New"';
+    ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
     ctx.fillText(`SPD:${wr.spd} CAT:${wr.cat} RTE:${wr.rte}`, btn.x + 55, btn.y + 34);
     ctx.fillStyle = COL.uiGreen; ctx.fillText('随机属性 +10', btn.x + 55, btn.y + 48);
   }
@@ -4194,18 +4354,18 @@ function drawHalftimeScreen() {
   ctx.fillText('HALFTIME', W / 2, 40);
   const s = game.seasonStats;
   drawCardFrame(ctx, 15, 55, W / 2 - 20, 100, false);
-  ctx.fillStyle = COL.uiBlue; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiBlue; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('上半场', W / 4, 70);
-  ctx.fillStyle = '#ccc'; ctx.font = '15px "Courier New"';
+  ctx.fillStyle = '#ccc'; ctx.font = '12px "Courier New"';
   ctx.fillText(`${s.completions}/${s.attempts}`, W / 4, 88);
   ctx.fillText(`${s.yards} YDS · ${s.tds} TD`, W / 4, 104);
   const rating = calculateQBRating();
   ctx.fillStyle = COL.uiGold; ctx.font = 'bold 15px "Courier New"'; ctx.fillText(rating.toFixed(1), W / 4, 130);
   drawCardFrame(ctx, W / 2 + 5, 55, W / 2 - 20, 100, false);
-  ctx.fillStyle = COL.uiRed; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiRed; ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('防守倾向', W * 3 / 4, 70);
   const ct = game.coverageTracker, total = ct.zone + ct.man + ct.blitz || 1;
-  ctx.fillStyle = '#ccc'; ctx.font = '15px "Courier New"';
+  ctx.fillStyle = '#ccc'; ctx.font = '12px "Courier New"';
   ctx.fillText(`Zone ${Math.round(ct.zone/total*100)}% Man ${Math.round(ct.man/total*100)}% Blitz ${Math.round(ct.blitz/total*100)}%`, W * 3 / 4, 100);
   ctx.fillStyle = COL.parchment; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
   ctx.fillText('选择半场调整', W / 2, 175);
@@ -4215,9 +4375,9 @@ function drawHalftimeScreen() {
     const btn = { x: bx, y: by, w: bw, h: bh, text: '', action: `halftime_${i}` };
     genericButtons.push(btn); const ih = isInsideRect(mouseX, mouseY, bx, by, bw, bh);
     drawCardFrame(ctx, bx, by, bw, bh, ih);
-    ctx.font = '16px serif'; ctx.textAlign = 'left'; ctx.fillText(opt.icon, bx + 10, by + 28);
-    ctx.fillStyle = COL.parchment; ctx.font = 'bold 22px "Courier New"'; ctx.fillText(opt.name, bx + 36, by + 20);
-    ctx.fillStyle = '#aaa'; ctx.font = '15px "Courier New"'; ctx.fillText(opt.desc, bx + 36, by + 36);
+    ctx.font = '18px serif'; ctx.textAlign = 'left'; ctx.fillText(opt.icon, bx + 10, by + 28);
+    ctx.fillStyle = COL.parchment; ctx.font = 'bold 14px "Courier New"'; ctx.fillText(opt.name, bx + 36, by + 20);
+    ctx.fillStyle = '#aaa'; ctx.font = '12px "Courier New"'; ctx.fillText(opt.desc, bx + 36, by + 36);
   }
   drawParticles();
 }
@@ -4238,7 +4398,7 @@ function drawVictoryCeremony(dt) {
   ctx.save(); const zoom = Math.min(1, game.victoryCeremonyTimer / 0.5);
   ctx.globalAlpha = zoom; ctx.fillStyle = COL.uiGold; ctx.font = `bold ${Math.round(44*zoom)}px "Courier New"`;
   ctx.textAlign = 'center'; ctx.fillText('CHAMPION!', W / 2, H / 2 - 50);
-  ctx.fillStyle = COL.parchment; ctx.font = 'bold 22px "Courier New"'; ctx.fillText('你击败了所有对手!', W / 2, H / 2 - 15);
+  ctx.fillStyle = COL.parchment; ctx.font = 'bold 16px "Courier New"'; ctx.fillText('你击败了所有对手!', W / 2, H / 2 - 15);
   ctx.restore(); drawParticles();
   if (game.victoryCeremonyTimer > 3.0) { game.state = 'victory'; game.victoryCeremony = false; }
 }
@@ -4249,6 +4409,7 @@ function drawSeasonHighlights(isVictory) {
   const rating = calculateQBRating();
   if (!game._seasonEnded) {
     game._seasonEnded = true;
+    Leaderboard.fetch(); // Refresh leaderboard
     const stats = { completions: game.seasonStats.completions, attempts: game.seasonStats.attempts,
       yards: game.seasonStats.yards, tds: game.seasonStats.tds, ints: game.seasonStats.ints, rating, isChampion: isVictory };
     game.newMilestones = Career.endSeason(stats);
@@ -4259,30 +4420,89 @@ function drawSeasonHighlights(isVictory) {
   else { ctx.fillStyle = COL.uiRed; ctx.font = 'bold 22px "Courier New"'; ctx.fillText('赛季结束', W / 2, 30); }
   ctx.restore();
   drawCardFrame(ctx, 15, 45, W - 30, 50, false);
-  ctx.fillStyle = '#ccc'; ctx.font = '15px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillStyle = '#ccc'; ctx.font = '12px "Courier New"'; ctx.textAlign = 'center';
   const winsF = game.seasonRecord.filter(r => r.won).length, tiesF = game.seasonRecord.filter(r => r.tied).length, lsF = game.seasonRecord.filter(r => !r.won && !r.tied).length;
   ctx.fillText(`${winsF}W${tiesF ? ' ' + tiesF + 'T' : ''} ${lsF}L | ${game.seasonStats.completions}/${game.seasonStats.attempts} ${game.seasonStats.yards}码 ${game.seasonStats.tds}TD ${game.seasonStats.ints}INT`, W / 2, 65);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"'; ctx.fillText(`QB Rating: ${rating.toFixed(1)}`, W / 2, 85);
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 16px "Courier New"'; ctx.fillText(`QB Rating: ${rating.toFixed(1)}`, W / 2, 85);
   const plays = [...game.seasonStats.plays].sort((a, b) => b.yards - a.yards).slice(0, 3);
-  ctx.fillStyle = COL.parchment; ctx.font = 'bold 15px "Courier New"'; ctx.fillText('精彩时刻', W / 2, 110);
+  ctx.fillStyle = COL.parchment; ctx.font = 'bold 12px "Courier New"'; ctx.fillText('精彩时刻', W / 2, 110);
   for (let i = 0; i < plays.length; i++) {
-    const p = plays[i]; ctx.fillStyle = i === 0 ? COL.uiGold : '#aaa'; ctx.font = '22px "Courier New"'; ctx.textAlign = 'left';
+    const p = plays[i]; ctx.fillStyle = i === 0 ? COL.uiGold : '#aaa'; ctx.font = '11px "Courier New"'; ctx.textAlign = 'left';
     ctx.fillText(`${i+1}. G${p.gameNum}: ${p.wrName} ${p.route.toUpperCase()} ${p.yards}码${p.isTD?' TD':''}`, 30, 126 + i * 16);
   }
   if (game.newMilestones && game.newMilestones.length > 0) {
     ctx.fillStyle = COL.uiGold; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center'; ctx.fillText('🎉 新成就!', W / 2, 186);
-    for (let i = 0; i < game.newMilestones.length; i++) { ctx.fillStyle = COL.parchment; ctx.font = '15px "Courier New"'; ctx.fillText(`${game.newMilestones[i].icon} ${game.newMilestones[i].label}`, W / 2, 202 + i * 14); }
+    for (let i = 0; i < game.newMilestones.length; i++) { ctx.fillStyle = COL.parchment; ctx.font = '12px "Courier New"'; ctx.fillText(`${game.newMilestones[i].icon} ${game.newMilestones[i].label}`, W / 2, 202 + i * 14); }
   }
-  const cY = 220 + (game.newMilestones ? game.newMilestones.length * 14 : 0);
-  drawCardFrame(ctx, 40, cY, W - 80, 42, false);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center'; ctx.fillText('挑战码', W / 2, cY + 14);
-  ctx.fillStyle = COL.parchment; ctx.font = 'bold 22px "Courier New"'; ctx.fillText(game.challengeSeedCode, W / 2, cY + 32);
+  let cY = 220 + (game.newMilestones ? game.newMilestones.length * 14 : 0);
   genericButtons = [];
-  const copyBtn = { x: W/2-110, y: cY+52, w: 100, h: 30, text: '📋 复制', action: 'copy_seed' };
-  const restartBtn = { x: W/2+10, y: cY+52, w: 100, h: 30, text: '🔄 再来', action: 'restart' };
-  genericButtons.push(copyBtn, restartBtn);
-  drawPixelButton(ctx, copyBtn, isInsideRect(mouseX, mouseY, copyBtn.x, copyBtn.y, copyBtn.w, copyBtn.h));
+  
+  // V21.5: Auto-prompt name on first render, then show leaderboard
+  if (!Leaderboard.submitted && !Leaderboard._prompted) {
+    Leaderboard._prompted = true;
+    // Use setTimeout so prompt appears after first frame renders
+    setTimeout(() => {
+      const saved = wx.getStorageSync('qb_player_id') || '';
+      const name = saved || 'Player';
+      if (name && name.trim()) {
+        Leaderboard.playerName = name.trim().slice(0, 12);
+        wx.setStorageSync('qb_player_id', Leaderboard.playerName);
+        Leaderboard.submit(Leaderboard.getEntry());
+      } else {
+        Leaderboard.submitted = true; // Skip if cancelled
+      }
+    }, 300);
+  }
+  
+  // Show submission status
+  if (Leaderboard.submitted) {
+    if (Leaderboard.playerName) {
+      ctx.fillStyle = COL.uiGreen; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
+      ctx.fillText(`✅ ${Leaderboard.playerName} 的成绩已提交！`, W / 2, cY + 10);
+    }
+    cY += 20;
+  } else {
+    ctx.fillStyle = '#666'; ctx.font = '12px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('提交成绩中...', W / 2, cY + 10);
+    cY += 20;
+  }
+  
+  // V21.5: Leaderboard display (always show if loaded)
+  if (Leaderboard.loaded && Leaderboard.scores.length > 0) {
+    const top = Leaderboard.scores.slice(0, 10);
+    const lbH = top.length * 18 + 28;
+    drawCardFrame(ctx, 15, cY, W - 30, lbH, false);
+    ctx.fillStyle = COL.uiGold; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('🏆 排行榜', W / 2, cY + 16);
+    for (let i = 0; i < top.length; i++) {
+      const s = top[i];
+      const isMe = s.name === Leaderboard.playerName;
+      ctx.fillStyle = isMe ? COL.uiGreen : (i === 0 ? COL.uiGold : i < 3 ? '#ddd' : '#999');
+      ctx.font = `${isMe ? 'bold ' : ''}12px "Courier New"`;
+      ctx.textAlign = 'left';
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+      ctx.fillText(`${medal} ${s.name}`, 25, cY + 34 + i * 18);
+      ctx.textAlign = 'right';
+      ctx.fillText(`第${s.gameNum}关 ${s.tds}TD ${s.yards}码 ⭐${s.rating}`, W - 25, cY + 34 + i * 18);
+    }
+    cY += lbH + 10;
+  } else if (Leaderboard.loading) {
+    ctx.fillStyle = '#666'; ctx.font = '12px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('加载排行榜...', W / 2, cY + 14); cY += 24;
+  }
+  
+  // Restart button (big, centered, prominent)
+  const restartBtn = { x: W/2 - 80, y: cY + 5, w: 160, h: 38, text: '🔄 再来一局', action: 'restart' };
+  genericButtons.push(restartBtn);
   drawPixelButton(ctx, restartBtn, isInsideRect(mouseX, mouseY, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h));
+  
+  // Challenge code (smaller, below)
+  cY += 55;
+  ctx.fillStyle = '#555'; ctx.font = '10px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillText(`挑战码: ${game.challengeSeedCode}`, W / 2, cY);
+  const copyBtn = { x: W/2 - 30, y: cY + 4, w: 60, h: 20, text: '📋复制', action: 'copy_seed' };
+  genericButtons.push(copyBtn);
+  drawPixelButton(ctx, copyBtn, isInsideRect(mouseX, mouseY, copyBtn.x, copyBtn.y, copyBtn.w, copyBtn.h));
   drawParticles();
 }
 function drawGameOver() { drawSeasonHighlights(false); }
@@ -4293,20 +4513,33 @@ function drawVictory() { drawSeasonHighlights(true); }
 // ============================================================
 let mouseX = 0, mouseY = 0, genericButtons = [];
 function getCanvasPos(e) {
-  // Mini game: map physical touch coords to game canvas coordinates
-  const cx2 = (e.clientX !== undefined) ? e.clientX : (e.x !== undefined ? e.x : 0);
-  const cy2 = (e.clientY !== undefined) ? e.clientY : (e.y !== undefined ? e.y : 0);
+  const cx2 = (e.clientX !== undefined) ? e.clientX : (e.pageX || 0);
+  const cy2 = (e.clientY !== undefined) ? e.clientY : (e.pageY || 0);
   return { x: cx2 * _touchScaleX, y: cy2 * _touchScaleY };
 }
 function isInsideRect(mx, my, rx, ry, rw, rh) { return mx >= rx && mx <= rx + rw && my >= ry && my <= ry + rh; }
-wx.onTouchMove(e => { if (e.touches && e.touches[0]) { const p = getCanvasPos(e.touches[0]); mouseX = p.x; mouseY = p.y; } });
-wx.onTouchEnd(e => { if (e.changedTouches && e.changedTouches[0]) { const p = getCanvasPos(e.changedTouches[0]); mouseX = p.x; mouseY = p.y; handleClick({ clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY, _wxTouch: true }); } });
-wx.onTouchStart(e => { if (e.touches && e.touches[0]) { const p = getCanvasPos(e.touches[0]); mouseX = p.x; mouseY = p.y; handleClick({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, _wxTouch: true }); } });
-// Keyboard shortcuts removed for WeChat Mini Game (touch-only)
+
+
+
 
 function handleClick(e) {
-  const pos = (e._wxTouch || e.touches) ? { x: mouseX, y: mouseY } : getCanvasPos(e);
+  const pos = e.touches ? { x: mouseX, y: mouseY } : getCanvasPos(e);
   SFX.play('click');
+  
+  // V21.5: Quit button — available during gameplay states
+  const playStates = ['reading', 'choosing', 'simulation', 'playResult', 'halftime', 'betweenGame'];
+  if (game._quitBtn && playStates.includes(game.state)) {
+    const q = game._quitBtn;
+    if (isInsideRect(pos.x, pos.y, q.x, q.y, q.w, q.h)) {
+      if (true) /* TODO: wx.showModal confirm */ {
+        sim = null;
+        game.state = 'gameOver';
+        SFX.play('gameover');
+      }
+      return;
+    }
+  }
+  
   switch (game.state) {
     case 'title':
       for (const btn of genericButtons) {
@@ -4421,7 +4654,7 @@ function handleClick(e) {
     case 'gameOver': case 'victory':
       for (const btn of genericButtons) {
         if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
-          if (btn.action === 'restart') startNewGame();
+          if (btn.action === 'restart') { Leaderboard.reset(); startNewGame(); }
           else if (btn.action === 'copy_seed') SeedSystem.copyToClipboard(game.challengeSeedCode);
         }
       }
@@ -4453,8 +4686,9 @@ function startNewGame() {
   game.starAbilityUsed = {}; game.disguisesLeft = 3; game.teamWrPicks = [0,0,0,0]; game.seasonRecord = [];
   game.iceFreezeUsed = false; game.betweenGamePhase = 'none';
   if (!SeedSystem.isChallenge) { game.mapSeed = Math.floor(Math.random()*100000); game.weatherSeed = Math.floor(Math.random()*100000); }
-  qb = { accuracy: 70 + legacyBonus, arm: 60, readSpeed: 0, level: 1 };
-  wrs = [ { id:0, name:'王牌', spd:60, cat:65, rte:60, lvl:1, num:81 }, { id:1, name:'闪击', spd:55, cat:60, rte:65, lvl:1, num:88 }, { id:2, name:'疾风', spd:65, cat:55, rte:55, lvl:1, num:13 }, { id:3, name:'铁塔', spd:50, cat:70, rte:60, lvl:1, num:84 } ];
+  const names = pickRandomNames();
+  qb = { accuracy: 70 + legacyBonus, arm: 60, readSpeed: 0, level: 1, name: names.qbName };
+  wrs = [ { id:0, name:names.wrNames[0], spd:60, cat:65, rte:60, lvl:1, num:81 }, { id:1, name:names.wrNames[1], spd:55, cat:60, rte:65, lvl:1, num:88 }, { id:2, name:names.wrNames[2], spd:65, cat:55, rte:55, lvl:1, num:13 }, { id:3, name:names.wrNames[3], spd:50, cat:70, rte:60, lvl:1, num:84 } ];
   relics = []; defenseBonus = 0; consecutiveCatches = 0; particles = [];
   fieldTexture = null; Camera.reset(); Replay.reset();
   TimeScale.target = 1; TimeScale.current = 1;
@@ -4540,10 +4774,18 @@ function startGame(gameIdx) {
 let isLoading = true, lastTime = 0;
 function initGame() {
   Career.load();
+  const lf = null, lt = null;
+  if (lt) lt.textContent = '生成像素球场...'; if (lf) lf.style.width = '30%';
   generateFieldTexture();
+  if (lt) lt.textContent = '准备完毕...'; if (lf) lf.style.width = '100%';
   generateVignette(); Weather.initParticles();
-  isLoading = false;
+  setTimeout(() => { isLoading = false; }, 300);
 }
+// WeChat touch handlers
+wx.onTouchMove(e => { if (e.touches && e.touches[0]) { const p = getCanvasPos(e.touches[0]); mouseX = p.x; mouseY = p.y; } });
+wx.onTouchEnd(e => { if (e.changedTouches && e.changedTouches[0]) { const p = getCanvasPos(e.changedTouches[0]); mouseX = p.x; mouseY = p.y; handleClick({ clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY, _wxTouch: true }); } });
+wx.onTouchStart(e => { if (e.touches && e.touches[0]) { const p = getCanvasPos(e.touches[0]); mouseX = p.x; mouseY = p.y; } });
+
 function gameLoop(timestamp) {
   const dt = Math.min((timestamp - lastTime) / 1000, 0.05); lastTime = timestamp;
   game.time += dt; game.animTimer += dt;
