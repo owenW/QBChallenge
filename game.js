@@ -2040,7 +2040,6 @@ function startSimulation(chosenWR) {
   // V19.2: Post-snap disguise — random chance DBs switch roles after snap
   // Higher game number = smarter defense = more disguises
   const disguiseChance = 0.15 + game.gameNum * 0.04; // 19% game 1 → 55% game 10
-  const team = getCurrentTeam();
   if (Math.random() < disguiseChance) {
     // Pick a disguise type
     const disguiseType = Math.random();
@@ -2154,7 +2153,7 @@ function startSimulation(chosenWR) {
 
 // V20: Called when player selects pass type DURING simulation (live throw timing)
 function triggerThrow(passType) {
-  if (!sim || sim.phase !== 'routes' || !game.waitingForPassType) return;
+  if (!sim || (sim.phase !== 'routes' && sim.phase !== 'dropback') || !game.waitingForPassType) return;
   game.passType = passType;
   game.waitingForPassType = false;
   game.throwMomentRouteProgress = sim.routeProgress; // record when player chose to throw
@@ -3723,7 +3722,7 @@ function drawLivePassTypeOverlay() {
   passTypeButtons = [];
   
   // Countdown bar based on rusher progress
-  const rushDistNow = sim.rushEntity ? Math.sqrt(
+  const rushDistNow = (sim.rushEntity && sim.qbPos) ? Math.sqrt(
     Math.pow(sim.rushEntity.yard - sim.qbPos.yard, 2) +
     Math.pow(sim.rushEntity.lane - sim.qbPos.lane, 2)
   ) : 10;
