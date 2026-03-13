@@ -1465,9 +1465,9 @@ function generatePlay(isElite, isBoss) {
     // Rusher stays at LOS+7
     defense.rusher.yard = Math.min(goalLine, defense.rusher.yard);
   }
-  // RULE: DBs must NEVER be at or behind the LOS (losY). Always on defensive side.
+  // RULE: DBs must NEVER be at or behind the LOS. Always on defensive side.
   for (const db of defense.dbs) {
-    if (db.yard <= losY) db.yard = losY + 5; // force minimum 5 yards off LOS
+    if (db.yard <= losY) db.yard = losY + 0.5; // minimum: just past LOS (for goal-line defense)
   }
 
   // Double agent relic: 30% chance defense misaligns
