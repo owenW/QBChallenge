@@ -2174,16 +2174,15 @@ function updateSimulation(dt) {
         const wrToBallDist = Math.sqrt(wrToBallY * wrToBallY + wrToBallL * wrToBallL);
         
         // WR must be within catchable range (3 yards) of the ball landing point
-        if (wrToBallDist > 3) {
-          // WR too far from ball — overthrown or WR ran past it
+        if (wrToBallDist > 5) {
+          // WR way too far from ball — clearly overthrown/underthrown
           sim.success = false;
           sim.isINT = false;
           sim.catchProb = 0;
           sim.overthrown = true;
         } else {
-          // WR is near ball — normal catch calculation
-          // Penalty for not being right at the ball (reaching/diving)
-          const reachPenalty = wrToBallDist > 1.5 ? -15 : wrToBallDist > 0.8 ? -5 : 0;
+          // WR is within catchable range — penalty scales with distance
+          const reachPenalty = wrToBallDist > 3 ? -25 : wrToBallDist > 2 ? -15 : wrToBallDist > 1 ? -5 : 0;
           sim.catchProb = calculateCatchProb(sim.chosenWR, game.passType) + reachPenalty;
           sim.catchProb = Math.max(5, Math.min(95, sim.catchProb));
           sim.success = Math.random() * 100 < sim.catchProb;
@@ -2225,10 +2224,46 @@ function updateSimulation(dt) {
         sim.phase = 'catch'; sim.timer = 0; TimeScale.set(0.5, 0.3);
         Camera.setForPhase('catch');
         const ws = FIELD.toScreen(sim.ballTarget.yard, sim.ballTarget.lane);
-        if (sim.success) { addParticle(ws.x, ws.y, 'catch_flash', 12); SFX.play('catch'); }
-        else if (sim.isINT) { SFX.play('miss'); Commentary.generate('int'); Camera.setForPhase('incomplete'); }
-        else if (sim.overthrown) { SFX.play('miss'); Commentary.show('传球偏离目标！', 2.5); Camera.setForPhase('incomplete'); }
-        else { SFX.play('miss'); Commentary.generate('incomplete'); Camera.setForPhase('incomplete'); }
+        // V18.8: Physics-based commentary — describe what actually happened
+        if (sim.success) {
+          addParticle(ws.x, ws.y, 'catch_flash', 12); SFX.play('catch');
+          // Describe the catch based on actual situation
+          const LTOY = 0.42;
+          let nearDB = 999;
+          for (let ci = 0; ci < 4; ci++) {
+            const ddb = sim.dbEntities[ci];
+            const cdy = ddb.yard - sim.wrEntities[sim.chosenWR].yard;
+            const cdl = (ddb.lane - sim.wrEntities[sim.chosenWR].lane) * LTOY;
+            const cd = Math.sqrt(cdy*cdy + cdl*cdl);
+            if (cd < nearDB) nearDB = cd;
+          }
+          if (nearDB > 10) Commentary.show(`${wrs[sim.chosenWR].name}完全空位！轻松接球！`, 2.5);
+          else if (nearDB > 5) Commentary.show(`${wrs[sim.chosenWR].name}跑出空间，稳稳接住！+${sim.yardsGained}码`, 2.5);
+          else if (nearDB > 2) Commentary.show(`${wrs[sim.chosenWR].name}在防守夹缝中接球！`, 2.5);
+          else Commentary.show(`强行接球！${wrs[sim.chosenWR].name}在紧贴防守中完成接球！`, 2.5);
+        } else if (sim.isINT) {
+          SFX.play('miss'); Camera.setForPhase('incomplete');
+          Commentary.show('被抄截！防守读懂了传球意图！', 3);
+        } else if (sim.overthrown) {
+          SFX.play('miss'); Camera.setForPhase('incomplete');
+          if (wrToBallDist > 4) Commentary.show('传球严重偏离，球飞到了无人区！', 2.5);
+          else Commentary.show(`传球稍偏，${wrs[sim.chosenWR].name}差一点够到球！`, 2.5);
+        } else {
+          SFX.play('miss'); Camera.setForPhase('incomplete');
+          // Describe why incomplete based on DB proximity
+          const LTOY2 = 0.42;
+          let nearDB2 = 999;
+          for (let ci = 0; ci < 4; ci++) {
+            const ddb = sim.dbEntities[ci];
+            const cdy2 = ddb.yard - sim.wrEntities[sim.chosenWR].yard;
+            const cdl2 = (ddb.lane - sim.wrEntities[sim.chosenWR].lane) * LTOY2;
+            const cd2 = Math.sqrt(cdy2*cdy2 + cdl2*cdl2);
+            if (cd2 < nearDB2) nearDB2 = cd2;
+          }
+          if (nearDB2 < 2) Commentary.show('防守紧贴！球被干扰，未完成接球', 2.5);
+          else if (nearDB2 < 5) Commentary.show(`${wrs[sim.chosenWR].name}没能接住球，传球未完成`, 2.5);
+          else Commentary.show(`${wrs[sim.chosenWR].name}手滑了！球掉在地上`, 2.5);
+        }
       }
       break;
     }
