@@ -3231,7 +3231,7 @@ function drawRadarChart(c, cx, cy, r, stats, labels, color) {
 // SCORE BUG — Pixel Art Style
 // ============================================================
 function drawScoreBug() {
-  const bH = 60, bY = H - bH - SAFE.bottom - 4, bX = 6, bW = W - 12;
+  const bH = 60, bY = H - bH - SAFE.bottom - 34, bX = 6, bW = W - 12;
   ctx.save();
   drawPixelRect(ctx, bX, bY, bW, bH, COL.scoreBug, COL.cardBorder);
   // Accent line
@@ -3286,7 +3286,7 @@ function drawPoiseRating() {
   const level = getComposureLevel();
   const labels = { cool: '冷静', nervous: '紧张', shaky: '颤抖', tilted: '崩溃' };
   const colors = { cool: COL.uiGreen, nervous: COL.uiYellow, shaky: COL.uiOrange, tilted: COL.uiRed };
-  const pw = 64, px = W - pw - 6, py = SAFE.top + 55, col = colors[level];
+  const pw = 64, px = W - pw - 6, py = SAFE.top + 70, col = colors[level];
   const poise = 100 - game.stress;
   ctx.save();
   drawPixelRect(ctx, px - 2, py - 2, pw + 4, 54, COL.cardBg, COL.cardBorder);
@@ -3309,21 +3309,21 @@ function drawRelicsBar() {
   if (relics.length === 0) return;
   ctx.save();
   for (let i = 0; i < relics.length; i++) {
-    drawPixelRect(ctx, 4 + i * 18, SAFE.top + 53, 16, 16, 'rgba(42,34,28,0.8)', 'rgba(138,118,80,0.4)');
+    drawPixelRect(ctx, 4 + i * 18, SAFE.top + 68, 16, 16, 'rgba(42,34,28,0.8)', 'rgba(138,118,80,0.4)');
     ctx.font = '14px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(relics[i].icon, 12 + i * 18, SAFE.top + 62);
+    ctx.fillText(relics[i].icon, 12 + i * 18, SAFE.top + 77);
   }
   ctx.restore();
 }
 
 function drawTopBar() {
   ctx.save();
-  const _topBarH = SAFE.top + 50;
+  const _topBarH = SAFE.top + 65;
   const g = ctx.createLinearGradient(0, 0, 0, _topBarH);
   g.addColorStop(0, 'rgba(18,16,14,0.85)'); g.addColorStop(1, 'rgba(18,16,14,0)');
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, _topBarH);
 
-  const _tY = SAFE.top; // text Y offset for safe area
+  const _tY = SAFE.top + 15; // text Y offset for safe area + padding
   if (currentPlay) {
     ctx.fillStyle = COL.parchment; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'left';
     ctx.fillText(currentPlay.offense.name, 10, _tY + 16);
@@ -3859,7 +3859,7 @@ function drawReadingPhase(dt) {
 let cardButtons = [];
 function drawWRCards(interactive) {
   if (!currentPlay) return;
-  const cW = Math.round((W - 30) / 4.2), cH = Math.round(cW * 1.4), totalW = 4 * cW + 3 * 4, startX = (W - totalW) / 2, baseY = H - cH - SAFE.bottom - 62;
+  const cW = Math.round((W - 30) / 4.2), cH = Math.round(cW * 1.4), totalW = 4 * cW + 3 * 4, startX = (W - totalW) / 2, baseY = H - cH - SAFE.bottom - 92;
   cardButtons = [];
   for (let i = 0; i < 4; i++) {
     const wr = wrs[i], pw = currentPlay.offense.wrs[i], prob = calculateCatchProb(i, 'touch');
@@ -3942,9 +3942,9 @@ function drawChoosingScreen() {
   drawPlayer(qs.x, qs.y, 'offense', 'idle', Math.floor(game.time * 4), 7, true, false, 1.1);
   Camera.endTransform(); Weather.drawParticles(ctx);
 
-  drawPixelRect(ctx, W / 2 - 120, H - 218, 240, 26, COL.cardBg, COL.cardBorder);
+  drawPixelRect(ctx, W / 2 - 120, H - 248, 240, 26, COL.cardBg, COL.cardBorder);
   ctx.fillStyle = COL.uiGold; ctx.font = 'bold 14px "Courier New"'; ctx.textAlign = 'center';
-  ctx.fillText('👇 点击卡牌选择传球目标!', W / 2, H - 202);
+  ctx.fillText('👇 点击卡牌选择传球目标!', W / 2, H - 232);
 
   drawWRCards(true); drawTopBar(); drawPoiseRating(); drawRelicsBar(); drawScoreBug(); drawParticles();
   Commentary.draw(ctx);
@@ -4018,26 +4018,26 @@ function drawLivePassTypeOverlay() {
   const maxRushDist = 10; // starting distance roughly
   const urgency = 1 - Math.min(1, Math.max(0, rushDistNow / maxRushDist));
   
-  // Semi-transparent backdrop at bottom
+  // Semi-transparent backdrop at bottom (raised 30px for easier thumb reach)
   ctx.save();
   ctx.fillStyle = `rgba(0,0,0,${0.3 + urgency * 0.3})`;
-  ctx.fillRect(0, H - 90, W, 90);
+  ctx.fillRect(0, H - 120, W, 90);
   
   // Urgency bar
   const barColor = urgency < 0.4 ? '#4CAF50' : urgency < 0.7 ? '#FF9800' : '#F44336';
-  ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(20, H - 88, W - 40, 4);
-  ctx.fillStyle = barColor; ctx.fillRect(20, H - 88, (W - 40) * (1 - urgency), 4);
+  ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(20, H - 118, W - 40, 4);
+  ctx.fillStyle = barColor; ctx.fillRect(20, H - 118, (W - 40) * (1 - urgency), 4);
   
   // Label
   ctx.fillStyle = urgency > 0.7 ? '#F44336' : '#fff';
   ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
   const urgencyText = urgency > 0.7 ? '⚠️ 快出手！冲传逼近！' : urgency > 0.4 ? '选择传球方式...' : '口袋干净 - 选择传球方式';
-  ctx.fillText(urgencyText, W / 2, H - 76);
+  ctx.fillText(urgencyText, W / 2, H - 106);
   
   // Route progress indicator
   const routePct = Math.round(sim.routeProgress * 100);
   ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
-  ctx.fillText(`线路进度: ${routePct}%`, W / 2, H - 66);
+  ctx.fillText(`线路进度: ${routePct}%`, W / 2, H - 96);
   
   // Pass type buttons
   const types = [
@@ -4046,7 +4046,7 @@ function drawLivePassTypeOverlay() {
     { type: 'lob', label: '🔵 高抛', desc: '深传', color: COL.lobBlue },
   ];
   const btnW = 120, spacing = 10, totalBW = 3 * btnW + 2 * spacing;
-  const startBX = (W - totalBW) / 2, bY = H - 58;
+  const startBX = (W - totalBW) / 2, bY = H - 88;
   for (let i = 0; i < 3; i++) {
     const t = types[i], bx = startBX + i * (btnW + spacing);
     const btn = { x: bx, y: bY, w: btnW, h: 44, action: `pass_${t.type}` };
