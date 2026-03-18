@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QB Challenge — 路线×防守 管理端</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #e0e0e0; font-family: 'Courier New', monospace; padding: 20px; }
+h1 { color: #c8a85c; text-align: center; margin-bottom: 8px; font-size: 20px; }
+.subtitle { text-align: center; color: #888; font-size: 12px; margin-bottom: 20px; }
+
+/* Coverage tabs */
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; justify-content: center; }
+.tab { padding: 8px 16px; background: #2a2a4e; border: 1px solid #444; border-radius: 6px; cursor: pointer; font-size: 13px; color: #aaa; transition: all 0.2s; }
+.tab:hover { background: #3a3a5e; color: #fff; }
+.tab.active { background: #4a3a2e; border-color: #c8a85c; color: #c8a85c; }
+
+/* Coverage info */
+.cover-info { background: #222240; border: 1px solid #444; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.cover-title { color: #c8a85c; font-size: 18px; font-weight: bold; margin-bottom: 8px; }
+.cover-desc { color: #aaa; font-size: 13px; line-height: 1.5; }
+.cover-formation { color: #88aacc; font-size: 12px; margin-top: 8px; }
+
+/* Route grid */
+.route-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.route-card { background: #2a2a3e; border: 2px solid #444; border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.2s; text-align: center; }
+.route-card:hover { border-color: #888; transform: translateY(-2px); }
+.route-card.beater { border-color: #4CAF50; background: #1a3a1a; }
+.route-card.bad { border-color: #f44336; background: #3a1a1a; }
+.route-card.neutral { border-color: #666; }
+.route-name { font-size: 16px; font-weight: bold; color: #e0e0e0; }
+.route-desc { font-size: 11px; color: #888; margin-top: 4px; }
+.route-tag { font-size: 10px; margin-top: 6px; padding: 2px 6px; border-radius: 3px; display: inline-block; }
+.route-tag.good { background: #2d5a2d; color: #8f8; }
+.route-tag.avoid { background: #5a2d2d; color: #f88; }
+.route-tag.ok { background: #4a4a2d; color: #cc8; }
+
+/* Status bar */
+.status { display: flex; gap: 12px; margin-bottom: 12px; justify-content: center; font-size: 12px; }
+.status span { padding: 4px 10px; border-radius: 4px; }
+.legend-beater { background: #1a3a1a; border: 1px solid #4CAF50; color: #8f8; }
+.legend-bad { background: #3a1a1a; border: 1px solid #f44336; color: #f88; }
+.legend-neutral { background: #2a2a3e; border: 1px solid #666; color: #aaa; }
+
+/* Chat/notes */
+.notes-section { background: #222240; border: 1px solid #444; border-radius: 8px; padding: 16px; margin-top: 16px; }
+.notes-title { color: #c8a85c; font-size: 14px; margin-bottom: 8px; }
+.note-input { width: 100%; background: #1a1a2e; border: 1px solid #555; border-radius: 4px; color: #e0e0e0; padding: 8px; font-family: inherit; font-size: 13px; resize: vertical; min-height: 60px; }
+.note-list { margin-top: 8px; }
+.note-item { background: #2a2a4e; border-radius: 4px; padding: 8px 12px; margin-bottom: 6px; font-size: 12px; }
+.note-item .from { color: #c8a85c; font-weight: bold; }
+.note-item .msg { color: #ccc; margin-top: 2px; }
+.note-item .time { color: #666; font-size: 10px; }
+
+/* Buttons */
+.btn { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: bold; transition: all 0.2s; }
+.btn-save { background: #c8a85c; color: #1a1a2e; }
+.btn-save:hover { background: #d8b86c; }
+.btn-export { background: #4a6a8a; color: #fff; margin-left: 8px; }
+.btn-export:hover { background: #5a7a9a; }
+.btn-send { background: #4CAF50; color: #fff; margin-top: 8px; }
+.btn-send:hover { background: #5CBF60; }
+.actions { text-align: center; margin-top: 20px; }
+
+/* Current game data indicator */
+.game-tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #3a3a5e; color: #aaa; margin-left: 6px; }
+.game-tag.match { background: #2d5a2d; color: #8f8; }
+.game-tag.diff { background: #5a4a2d; color: #fc8; }
+
+/* Diff view */
+.diff-section { background: #222240; border: 1px solid #c8a85c; border-radius: 8px; padding: 16px; margin-top: 16px; }
+.diff-title { color: #c8a85c; font-size: 14px; margin-bottom: 8px; }
+.diff-item { padding: 4px 0; font-size: 12px; }
+.diff-item .old { color: #f88; text-decoration: line-through; }
+.diff-item .new { color: #8f8; }
+</style>
+</head>
+<body>
+
+<h1>🏈 QB Challenge — 路线×防守 管理端</h1>
+<p class="subtitle">点击路线卡片切换状态: ✅克制 → ❌避免 → ⚪中性 | Owen标注 → 同步到游戏</p>
+
+<div class="status">
+  <span class="legend-beater">✅ 克制路线</span>
+  <span class="legend-bad">❌ 应避免</span>
+  <span class="legend-neutral">⚪ 中性</span>
+</div>
+
+<div class="tabs" id="tabs"></div>
+<div class="cover-info" id="coverInfo"></div>
+<div class="route-grid" id="routeGrid"></div>
+
+<div class="notes-section">
+  <div class="notes-title">💬 讨论区 — <span id="noteCover"></span></div>
+  <div class="note-list" id="noteList"></div>
+  <textarea class="note-input" id="noteInput" placeholder="输入你的看法..."></textarea>
+  <button class="btn btn-send" onclick="addNote()">发送</button>
+</div>
+
+<div class="diff-section" id="diffSection" style="display:none">
+  <div class="diff-title">📊 与当前游戏数据差异</div>
+  <div id="diffList"></div>
+</div>
+
+<div class="actions">
+  <button class="btn btn-save" onclick="saveData()">💾 保存配置</button>
+  <button class="btn btn-export" onclick="exportCode()">📋 导出代码 (复制到game.js)</button>
+</div>
+
+<pre id="codeOutput" style="display:none; background:#111; padding:16px; margin-top:16px; border-radius:8px; font-size:11px; overflow-x:auto; color:#8f8; white-space:pre-wrap;"></pre>
+
+<script>
+// ── Route definitions ──
+const ROUTES = {
+  streak: { name: 'GO/FLY/STREAK', desc: '直线冲刺深区', type: 'deep' },
+  post: { name: 'POST', desc: '斜切向中路深区', type: 'deep' },
+  corner: { name: 'CORNER', desc: '斜切向边线深区', type: 'deep' },
+  seam: { name: 'SEAM', desc: '接缝路线(中路deep)', type: 'deep' },
+  wheel: { name: 'WHEEL', desc: '弧线从短区到深区', type: 'deep' },
+  slant: { name: 'SLANT', desc: '斜切短传(腰旗#1)', type: 'short' },
+  drag: { name: 'DRAG', desc: '横穿底线', type: 'short' },
+  flat: { name: 'FLAT', desc: '平飞短传', type: 'short' },
+  curl: { name: 'CURL', desc: '跑出后回身接球', type: 'short' },
+  hitch: { name: 'HITCH', desc: '急停回转', type: 'short' },
+  out: { name: 'OUT', desc: '外切向边线', type: 'mid' },
+  dig: { name: 'DIG', desc: '内切横穿(10码)', type: 'mid' },
+};
+
+// ── Coverage definitions (5v5 flag) ──
+const COVERAGES = {
+  'Cover 1': {
+    desc: '1 rusher + 3人盯人 + 1 Free Safety',
+    formation: '3个DB各盯一个WR，第4个WR完全没人盯。FS站中路深区读QB。',
+    detail: '5v5腰旗: 4个WR只有3人盯 → 必有1个free WR',
+  },
+  'Cover 2': {
+    desc: '1 rusher + 2 Deep Safety + 2 Flat Defender',
+    formation: '2人守深区两侧，2人守短区flat。中路deep是空的。',
+    detail: '5v5腰旗: 中路缝隙在窄场(25码)上更致命',
+  },
+  'Cover 3': {
+    desc: '1 rusher + 3 Deep + 1 Flat Defender',
+    formation: '3人守深区三等分，1人守整个underneath短区。',
+    detail: '5v5腰旗: 1个flat defender守25码宽短区 → 不可能全覆盖',
+  },
+  'Cover 4': {
+    desc: '1 rusher + 4人全守Deep (Quarters)',
+    formation: '4个DB各守1/4深区。underneath完全放空。',
+    detail: '5v5腰旗: 短区真空 → 任何short route都是免费接球',
+  },
+  'Man Blitz': {
+    desc: '1 快速Rusher + 4人全盯人',
+    formation: '所有DB贴身盯人，rusher快速冲传。出手时间极短。',
+    detail: '5v5腰旗: 无锋线保护 → rush count内必须出手或scramble',
+  },
+};
+
+// ── Current game data (from game.js) ──
+const GAME_BEATERS = {
+  'Cover 1': ['slant','drag','flat','streak','curl','hitch','out'],
+  'Cover 2': ['seam','post','streak','corner'],
+  'Cover 3': ['curl','hitch','out','flat','dig'],
+  'Cover 4': ['drag','slant','flat','hitch','dig'],
+  'Man Blitz': ['slant','flat','drag','hitch'],
+};
+
+// ── State ──
+let data = {};   // { coverName: { beaters: [], bad: [], notes: [] } }
+let currentCover = 'Cover 1';
+
+function init() {
+  // Load saved data or init from game
+  const saved = localStorage.getItem('qb_admin_v1');
+  if (saved) {
+    data = JSON.parse(saved);
+  } else {
+    for (const [cover, info] of Object.entries(COVERAGES)) {
+      data[cover] = {
+        beaters: [...(GAME_BEATERS[cover] || [])],
+        bad: [],
+        notes: [],
+      };
+    }
+  }
+  // Init bad routes for Cover 1 (post flies into FS)
+  if (!data['Cover 1'].bad) data['Cover 1'].bad = [];
+
+  renderTabs();
+  selectCover('Cover 1');
+}
+
+function renderTabs() {
+  const el = document.getElementById('tabs');
+  el.innerHTML = '';
+  for (const cover of Object.keys(COVERAGES)) {
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (cover === currentCover ? ' active' : '');
+    tab.textContent = cover;
+    tab.onclick = () => selectCover(cover);
+    el.appendChild(tab);
+  }
+}
+
+function selectCover(cover) {
+  currentCover = cover;
+  renderTabs();
+  renderCoverInfo();
+  renderRouteGrid();
+  renderNotes();
+  renderDiff();
+}
+
+function renderCoverInfo() {
+  const info = COVERAGES[currentCover];
+  const el = document.getElementById('coverInfo');
+  el.innerHTML = `
+    <div class="cover-title">${currentCover}</div>
+    <div class="cover-desc">${info.desc}</div>
+    <div class="cover-formation">📋 ${info.formation}</div>
+    <div class="cover-formation">🏈 ${info.detail}</div>
+  `;
+}
+
+function getRouteState(cover, route) {
+  const d = data[cover];
+  if (d.beaters.includes(route)) return 'beater';
+  if (d.bad && d.bad.includes(route)) return 'bad';
+  return 'neutral';
+}
+
+function cycleRouteState(cover, route) {
+  const d = data[cover];
+  const state = getRouteState(cover, route);
+  // beater → bad → neutral → beater
+  if (state === 'beater') {
+    d.beaters = d.beaters.filter(r => r !== route);
+    if (!d.bad) d.bad = [];
+    d.bad.push(route);
+  } else if (state === 'bad') {
+    d.bad = (d.bad || []).filter(r => r !== route);
+  } else {
+    d.beaters.push(route);
+  }
+  renderRouteGrid();
+  renderDiff();
+}
+
+function renderRouteGrid() {
+  const el = document.getElementById('routeGrid');
+  el.innerHTML = '';
+  for (const [routeId, route] of Object.entries(ROUTES)) {
+    const state = getRouteState(currentCover, routeId);
+    const gameState = (GAME_BEATERS[currentCover] || []).includes(routeId) ? 'beater' : 'neutral';
+    const matches = state === gameState || (state === 'neutral' && gameState === 'neutral');
+
+    const card = document.createElement('div');
+    card.className = `route-card ${state}`;
+    card.onclick = () => cycleRouteState(currentCover, routeId);
+
+    let tagHTML = '';
+    if (state === 'beater') tagHTML = '<div class="route-tag good">✅ 克制</div>';
+    else if (state === 'bad') tagHTML = '<div class="route-tag avoid">❌ 避免</div>';
+    else tagHTML = '<div class="route-tag ok">⚪ 中性</div>';
+
+    const gameTag = matches
+      ? '<span class="game-tag match">= 游戏</span>'
+      : '<span class="game-tag diff">≠ 游戏</span>';
+
+    card.innerHTML = `
+      <div class="route-name">${route.name} ${gameTag}</div>
+      <div class="route-desc">${route.desc} (${route.type})</div>
+      ${tagHTML}
+    `;
+    el.appendChild(card);
+  }
+}
+
+function renderNotes() {
+  document.getElementById('noteCover').textContent = currentCover;
+  const el = document.getElementById('noteList');
+  const notes = data[currentCover].notes || [];
+  el.innerHTML = notes.map(n => `
+    <div class="note-item">
+      <span class="from">${n.from}</span> <span class="time">${n.time}</span>
+      <div class="msg">${n.msg}</div>
+    </div>
+  `).join('');
+}
+
+function addNote() {
+  const input = document.getElementById('noteInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  if (!data[currentCover].notes) data[currentCover].notes = [];
+  data[currentCover].notes.push({
+    from: 'Owen',
+    msg: msg,
+    time: new Date().toLocaleString('zh-CN'),
+  });
+  input.value = '';
+  renderNotes();
+  saveData();
+}
+
+function renderDiff() {
+  const el = document.getElementById('diffList');
+  const section = document.getElementById('diffSection');
+  let diffs = [];
+
+  for (const [cover, gameBeaters] of Object.entries(GAME_BEATERS)) {
+    const adminBeaters = data[cover].beaters || [];
+    // Routes in game but not admin
+    for (const r of gameBeaters) {
+      if (!adminBeaters.includes(r)) {
+        diffs.push({ cover, route: r, type: 'removed', desc: `${ROUTES[r]?.name || r}: 游戏标为克制 → 你移除了` });
+      }
+    }
+    // Routes in admin but not game
+    for (const r of adminBeaters) {
+      if (!gameBeaters.includes(r)) {
+        diffs.push({ cover, route: r, type: 'added', desc: `${ROUTES[r]?.name || r}: 游戏未标为克制 → 你新增了` });
+      }
+    }
+  }
+
+  if (diffs.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
+  el.innerHTML = diffs.map(d => `
+    <div class="diff-item">
+      <strong>${d.cover}</strong> — 
+      ${d.type === 'removed' ? `<span class="old">${d.desc}</span>` : `<span class="new">${d.desc}</span>`}
+    </div>
+  `).join('');
+}
+
+function saveData() {
+  localStorage.setItem('qb_admin_v1', JSON.stringify(data));
+  alert('✅ 已保存到本地');
+}
+
+function exportCode() {
+  let code = '  // ── 管理端确认的 route vs coverage 知识库 (Owen reviewed) ──\n';
+  code += '  const routeVsCover = {\n';
+  for (const [cover, info] of Object.entries(COVERAGES)) {
+    const d = data[cover];
+    const beaters = JSON.stringify(d.beaters);
+    const bad = JSON.stringify(d.bad || []);
+    // Get existing concept/weakness/etc from current code
+    code += `    '${cover}': {\n`;
+    code += `      beaters: ${beaters},\n`;
+    code += `      bad: ${bad},\n`;
+    code += `    },\n`;
+  }
+  code += '  };\n';
+
+  // Also generate the _coverBeaters for generatePlay
+  code += '\n  // For generatePlay() beater guarantee:\n';
+  code += '  const _coverBeaters = {\n';
+  for (const [cover, info] of Object.entries(COVERAGES)) {
+    const d = data[cover];
+    code += `    '${cover}': ${JSON.stringify(d.beaters)},\n`;
+  }
+  code += '  };\n';
+
+  const el = document.getElementById('codeOutput');
+  el.style.display = 'block';
+  el.textContent = code;
+
+  // Copy to clipboard
+  navigator.clipboard.writeText(code).then(() => {
+    alert('📋 代码已复制到剪贴板！\n粘贴到 minigame/game.js 的 generateTeachingMoment 函数中替换现有的 routeVsCover');
+  }).catch(() => {
+    alert('代码已显示在下方，请手动复制');
+  });
+}
+
+init();
+</script>
+</body>
+</html>
