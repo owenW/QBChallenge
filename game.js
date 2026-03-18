@@ -2926,6 +2926,38 @@ function updateSimulation(dt) {
 }
 
 function handlePlayResult() {
+  // V22: Store play result data FIRST (before any early returns that null sim)
+  if (sim) {
+    let teachClosestDB = 999;
+    if (!sim.isSack) {
+      const LTOY_T = 0.42;
+      for (let ti = 0; ti < 4; ti++) {
+        const tdb = sim.dbEntities[ti];
+        const twr = sim.wrEntities[sim.chosenWR];
+        const tdy = tdb.yard - twr.yard;
+        const tdl = (tdb.lane - twr.lane) * LTOY_T;
+        const tdist = Math.sqrt(tdy * tdy + tdl * tdl);
+        if (tdist < teachClosestDB) teachClosestDB = tdist;
+      }
+    }
+    game.lastPlayResult = {
+      success: sim.success, isINT: sim.isINT, isSack: sim.isSack,
+      yardsGained: sim.yardsGained, yacYards: sim.yacYards, yacType: sim.yacType,
+      sackYards: sim.sackYards, chosenWR: sim.chosenWR,
+      catchProb: sim.catchProb || 0,
+      overthrown: sim.overthrown || false,
+      passType: game.passType,
+      route: currentPlay ? currentPlay.offense.wrs[sim.chosenWR].route : '',
+      wrName: wrs[sim.chosenWR].name,
+      coverageIsMan: currentPlay ? currentPlay.coverageIsMan : false,
+      closestDBDist: teachClosestDB,
+      downs: game.downs.current,
+      scrambleResult: game.scrambleResult,
+      teamName: getCurrentTeam().name,
+      routeYards: sim.routeYards || 0,
+    };
+  }
+
   const isTD = sim && sim.success && (game.ballYardLine + sim.yardsGained >= 50);
   game.seasonStats.attempts++;
   if (sim && !sim.isSack) updateTrust(sim.chosenWR, sim.success ? 'complete' : 'incomplete');
@@ -3034,14 +3066,7 @@ function handlePlayResult() {
       if (game.gameClock <= 0) { endCurrentGame(game.gameScore.player > game.gameScore.opponent); sim = null; return; }
     }
   }
-  // V15.1: Store play result for display before nullifying sim
-  if (sim) {
-    game.lastPlayResult = {
-      success: sim.success, isINT: sim.isINT, isSack: sim.isSack,
-      yardsGained: sim.yardsGained, yacYards: sim.yacYards, yacType: sim.yacType,
-      sackYards: sim.sackYards, chosenWR: sim.chosenWR
-    };
-  }
+  // V22: lastPlayResult already stored at top of handlePlayResult()
   // V17: End game check — clock hits 0:00
   if (game.gameClock <= 0 && game.state !== 'halftime') {
     endCurrentGame(game.gameScore.player > game.gameScore.opponent);
@@ -4221,6 +4246,235 @@ function drawPlayResult() {
 }
 
 // ============================================================
+// V22: TEACHING MOMENT — Post-Play Educational Breakdown
+// ============================================================
+
+function generateTeachingMoment(lr) {
+  if (!lr) return { title: '', lines: [], tip: '' };
+  const routeNames = {
+    post: 'POST（斜切深区）', slant: 'SLANT（斜切短传）', flat: 'FLAT（平飞短传）',
+    streak: 'STREAK（直线冲刺）', drag: 'DRAG（横穿底线）', out: 'OUT（外切）',
+    curl: 'CURL（回身接球）', corner: 'CORNER（角线深传）', wheel: 'WHEEL（弧线深传）',
+    hitch: 'HITCH（急停回转）', dig: 'DIG（内切横穿）', seam: 'SEAM（接缝路线）',
+  };
+  const passNames = { bullet: '子弹传球', lob: '高吊传球', touch: '触传', normal: '标准传球' };
+  const routeLabel = routeNames[lr.route] || lr.route;
+  const passLabel = passNames[lr.passType] || lr.passType;
+  const coverLabel = lr.coverageIsMan ? '盯人防守' : '区域防守';
+
+  let title = '', lines = [], tip = '';
+
+  if (lr.isSack) {
+    title = '📖 被擒杀分析';
+    lines.push(`你的QB被擒杀，损失${lr.sackYards || 5}码。`);
+    if (lr.scrambleResult === 'stand_tall') {
+      lines.push('你选择了硬顶口袋，但冲传压力太大。');
+      tip = '💡 面对强力冲传时，优先考虑左右闪避而不是硬站。快速出手的短传（bullet + slant/flat）也能在压力下完成。';
+    } else {
+      lines.push('冲传手突破了进攻锋线的保护。');
+      tip = '💡 当对方有强力冲传时，选择出手快的路线（slant, flat, hitch），配合bullet传球能最快完成进攻。';
+    }
+  } else if (lr.isINT) {
+    title = '📖 被抄截分析';
+    lines.push(`传向${lr.wrName}的${routeLabel}被防守拦截。`);
+    lines.push(`传球方式: ${passLabel} | 防守: ${coverLabel}`);
+    if (lr.closestDBDist < 3) {
+      lines.push(`最近防守距离仅${lr.closestDBDist.toFixed(1)}码，处于紧贴防守状态。`);
+      tip = '💡 防守球员紧贴时，INT风险极高。在这种情况下应该读防选择更空的接球手，或者用bullet传球缩小被抄截窗口。';
+    } else if (lr.passType === 'lob') {
+      lines.push('高吊传球给了防守额外的反应时间。');
+      tip = '💡 高吊球虽然适合深区传球，但会给防守球员更多时间去抢断。中短距离优先用bullet或touch传球。';
+    } else {
+      lines.push('防守成功读懂了你的传球意图。');
+      tip = '💡 避免重复选择同一个接球手——防守会适应你的倾向（adaptive tracking）。分散传球目标是减少INT的关键。';
+    }
+  } else if (lr.overthrown) {
+    title = '📖 传球偏离分析';
+    lines.push(`传向${lr.wrName}的${routeLabel}严重偏离目标。`);
+    lines.push(`传球方式: ${passLabel}`);
+    tip = '💡 传球偏离通常是因为出手时机不对。在接球手跑完路线之前（route progress < 70%）出手会导致球飞向错误位置。等接球手进入路线终点再出手。';
+  } else if (lr.success) {
+    title = '📖 传球成功分析';
+    lines.push(`${lr.wrName}通过${routeLabel}接球成功！`);
+    lines.push(`推进${lr.yardsGained}码 (路线${lr.routeYards || 0}码 + YAC ${lr.yacYards || 0}码)`);
+    lines.push(`传球方式: ${passLabel} | 防守: ${coverLabel}`);
+    lines.push(`接球成功率: ${Math.round(lr.catchProb)}% | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
+
+    if (lr.closestDBDist > 10) {
+      tip = '💡 漂亮的读防！你找到了防守中的空隙。这种"wide open"的接球几乎不可能失误，说明你的路线-防守匹配读得很准。';
+    } else if (lr.closestDBDist > 5) {
+      tip = '💡 不错的选择。接球手有合理的分离空间。继续寻找这种中等空间的传球机会——稳定是四分卫最重要的品质。';
+    } else {
+      tip = '💡 这是一次勇敢的传球！虽然成功了，但DB很近，有一定风险。高风险传球不是每次都能成功——寻找更开阔的目标能提升整体效率。';
+    }
+
+    if (lr.yacYards > 5) {
+      tip += `\n🏃 ${lr.wrName}接球后又推进了${lr.yacYards}码！空间越大=YAC越多，这就是"separation"的价值。`;
+    }
+  } else {
+    // Incomplete
+    title = '📖 传球未完成分析';
+    lines.push(`传向${lr.wrName}的${routeLabel}未能完成接球。`);
+    lines.push(`传球方式: ${passLabel} | 防守: ${coverLabel}`);
+    lines.push(`接球成功率: ${Math.round(lr.catchProb)}% | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
+
+    if (lr.closestDBDist < 2) {
+      lines.push('防守球员几乎贴在接球手身上。');
+      tip = '💡 防守紧贴时接球极难。学会"读防"是QB的核心能力：先看防守站位，找到被defensive gap露出的接球手再传。';
+    } else if (lr.closestDBDist < 5) {
+      lines.push('接球手有一定空间，但竞争激烈。');
+      if (lr.passType === 'lob') {
+        tip = '💡 在竞争区域用高吊球给了DB额外反应时间。试试bullet传球——快速出手让防守来不及干扰。';
+      } else {
+        tip = '💡 接球区域处于竞争状态。可以考虑：(1)等路线跑完再出手 (2)选择更空的其他接球手 (3)用motion来识别人盯人/区域防守。';
+      }
+    } else {
+      lines.push('接球手有空间但仍未完成接球。');
+      tip = '💡 有时候运气也是比赛的一部分。空间足够但仍未接住，可能是时机或角度问题。保持信心，继续传给空位接球手。';
+    }
+
+    // Route-specific tips
+    if (lr.coverageIsMan && (lr.route === 'slant' || lr.route === 'drag')) {
+      tip += '\n⚡ 对盯人防守，slant/drag是最佳选择之一——利用quick release在DB反应前完成传球。';
+    }
+    if (!lr.coverageIsMan && (lr.route === 'streak' || lr.route === 'post')) {
+      tip += '\n🎯 对区域防守，深区路线需要找到zone之间的缝隙。Curl和dig路线通常能在区域防守的空隙中停下来接球。';
+    }
+  }
+
+  return { title, lines, tip };
+}
+
+let teachingMomentData = null;
+
+function drawTeachingMoment() {
+  // Dark overlay
+  ctx.fillStyle = 'rgba(10, 8, 6, 0.95)';
+  ctx.fillRect(0, 0, W, H);
+
+  if (!teachingMomentData) return;
+
+  const margin = 16;
+  const cardX = margin, cardW = W - margin * 2;
+
+  // --- First pass: measure total content height ---
+  const measureCtx = ctx;
+  let totalH = 0;
+  const lineH = 22, tipLineH = 20, wrapW = cardW - 30, tipWrapW = cardW - 30;
+
+  // Title + divider
+  totalH += 30 + 20; // title line + gap + divider
+
+  // Info lines
+  measureCtx.font = '14px "Courier New"';
+  for (const line of teachingMomentData.lines) {
+    let currentLine = '';
+    for (const ch of line) {
+      if (measureCtx.measureText(currentLine + ch).width > wrapW) { totalH += lineH; currentLine = ch; }
+      else currentLine += ch;
+    }
+    totalH += lineH + 4;
+  }
+  totalH += 15; // gap before tip
+
+  // Tip box height
+  let tipBoxH = 20;
+  if (teachingMomentData.tip) {
+    measureCtx.font = '13px "Courier New"';
+    const tipLines = teachingMomentData.tip.split('\n');
+    for (const tipLine of tipLines) {
+      let currentLine = '';
+      for (const ch of tipLine) {
+        if (measureCtx.measureText(currentLine + ch).width > tipWrapW) { tipBoxH += tipLineH; currentLine = ch; }
+        else currentLine += ch;
+      }
+      tipBoxH += tipLineH + 2;
+    }
+    tipBoxH += 10;
+  }
+  totalH += tipBoxH + 30 + 44; // tip + gap + button
+
+  // Vertically center the content
+  let y = Math.max(40, Math.floor((H - totalH) / 2));
+
+  // --- Draw: Title ---
+  ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"';
+  ctx.fillText(teachingMomentData.title, W / 2, y);
+  y += 32;
+
+  // Divider
+  ctx.strokeStyle = COL.uiGold; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.5;
+  ctx.beginPath(); ctx.moveTo(cardX + 15, y); ctx.lineTo(cardX + cardW - 15, y); ctx.stroke();
+  ctx.globalAlpha = 1; y += 18;
+
+  // --- Draw: Info card background ---
+  const infoStartY = y - 8;
+  // Calculate info block height
+  ctx.font = '14px "Courier New"';
+  let infoH = 16;
+  for (const line of teachingMomentData.lines) {
+    let cl = '';
+    for (const ch of line) {
+      if (ctx.measureText(cl + ch).width > wrapW) { infoH += lineH; cl = ch; } else cl += ch;
+    }
+    infoH += lineH + 4;
+  }
+  drawPixelRect(ctx, cardX, infoStartY, cardW, infoH, 'rgba(30,25,18,0.7)', 'rgba(200,168,92,0.3)');
+  y += 6;
+
+  // --- Draw: Info lines ---
+  ctx.textAlign = 'left';
+  ctx.fillStyle = COL.parchment; ctx.font = '14px "Courier New"';
+  for (const line of teachingMomentData.lines) {
+    let currentLine = '';
+    for (const ch of line) {
+      if (ctx.measureText(currentLine + ch).width > wrapW) {
+        ctx.fillText(currentLine, cardX + 15, y);
+        currentLine = ch; y += lineH;
+      } else currentLine += ch;
+    }
+    ctx.fillText(currentLine, cardX + 15, y);
+    y += lineH + 4;
+  }
+  y += 15;
+
+  // --- Draw: Tip box ---
+  if (teachingMomentData.tip) {
+    drawPixelRect(ctx, cardX, y, cardW, tipBoxH, 'rgba(25,50,20,0.8)', COL.uiGreen);
+    y += 16;
+
+    ctx.fillStyle = '#99dd77'; ctx.font = '13px "Courier New"';
+    const tipLines = teachingMomentData.tip.split('\n');
+    for (const tipLine of tipLines) {
+      let currentLine = '';
+      for (const ch of tipLine) {
+        if (ctx.measureText(currentLine + ch).width > tipWrapW) {
+          ctx.fillText(currentLine, cardX + 14, y);
+          currentLine = ch; y += tipLineH;
+        } else currentLine += ch;
+      }
+      ctx.fillText(currentLine, cardX + 14, y);
+      y += tipLineH + 2;
+    }
+    y += 15;
+  }
+
+  // --- Draw: Continue button ---
+  y += 15;
+  const btnW = 180, btnH = 44;
+  const btnX = W / 2 - btnW / 2, btnY = Math.min(y, H - 60);
+  const btnHover = isInsideRect(mouseX, mouseY, btnX, btnY, btnW, btnH);
+  drawPixelRect(ctx, btnX, btnY, btnW, btnH, btnHover ? '#3a6a2a' : '#2a4a1a', COL.uiGreen);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#ccffaa'; ctx.font = 'bold 17px "Courier New"';
+  ctx.fillText('✅ 明白了', W / 2, btnY + 28);
+  genericButtons = [{ x: btnX, y: btnY, w: btnW, h: btnH, action: 'teaching_ok' }];
+
+  // Score bar at bottom
+  drawScoreBug();
+}
+
+// ============================================================
 // UPGRADE, EVENT, SHOP, REST, HALFTIME, TRAINING SCREENS
 // ============================================================
 let upgradeButtons = [];
@@ -4528,7 +4782,7 @@ function handleClick(e) {
   SFX.play('click');
   
   // V21.5: Quit button — available during gameplay states
-  const playStates = ['reading', 'choosing', 'simulation', 'playResult', 'halftime', 'betweenGame'];
+  const playStates = ['reading', 'choosing', 'simulation', 'playResult', 'teachingMoment', 'halftime', 'betweenGame'];
   if (game._quitBtn && playStates.includes(game.state)) {
     const q = game._quitBtn;
     if (isInsideRect(pos.x, pos.y, q.x, q.y, q.w, q.h)) {
@@ -4605,7 +4859,17 @@ function handleClick(e) {
       if (sim && sim.phase === 'result' && sim.timer > 0.5) handlePlayResult();
       break;
     case 'playResult':
-      generatePlay(false, false); game.state = 'reading'; game.readingPhase = true; game.readingTimer = 0; genericButtons = []; motionAnimPhase = 'idle'; motionAnimTimer = 0; break;
+      // V22: Go to teaching moment instead of directly to next play
+      teachingMomentData = generateTeachingMoment(game.lastPlayResult);
+      game.state = 'teachingMoment'; genericButtons = []; break;
+    case 'teachingMoment':
+      for (const btn of genericButtons) {
+        if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h) && btn.action === 'teaching_ok') {
+          generatePlay(false, false); game.state = 'reading'; game.readingPhase = true; game.readingTimer = 0; genericButtons = []; motionAnimPhase = 'idle'; motionAnimTimer = 0;
+          return;
+        }
+      }
+      break;
     case 'upgrade':
       for (const btn of upgradeButtons) { if (isInsideRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) { applyUpgrade(btn.index); game.scoutReport = false; if (game.filmStudyFloorsLeft > 0) game.filmStudyFloorsLeft--; game.state = 'seasonMap'; return; } }
       break;
@@ -4787,7 +5051,7 @@ function gameLoop(timestamp) {
   game.time += dt; game.animTimer += dt;
   if (game.animTimer > 0.12) { game.animFrame = (game.animFrame + 1) % 8; game.animTimer = 0; }
   updateParticles(dt); updateShake(); Camera.update(dt); Commentary.update(dt); Weather.update(dt);
-  if (game.gameClockRunning && (game.state === 'reading' || game.state === 'choosing' || game.state === 'simulation' || game.state === 'playResult')) {
+  if (game.gameClockRunning && (game.state === 'reading' || game.state === 'choosing' || game.state === 'simulation' || game.state === 'playResult') && game.state !== 'teachingMoment') {
     game.gameClock = Math.max(0, game.gameClock - dt);
   }
   ctx.clearRect(0, 0, W, H);
@@ -4802,6 +5066,7 @@ function gameLoop(timestamp) {
       // passType draw removed in V20
       case 'simulation': drawSimulationScreen(dt); drawLivePassTypeOverlay(); break;
       case 'playResult': drawPlayResult(); break;
+      case 'teachingMoment': drawTeachingMoment(); break;
       case 'upgrade': drawUpgradeScreen(); break;
       case 'halftime': drawHalftimeScreen(); break;
       case 'event': drawEventScreen(); break;
