@@ -4365,38 +4365,38 @@ function generateTeachingMoment(lr) {
   const routeVsCover = {
     'Cover 1': {
       beaters: ['slant','drag','flat','post'],
-      concept: 'Cover 1 = 3人盯人 + 1个Free Safety读QB。腰旗5v5中，4个DB覆盖4个WR，FS居中是唯一的额外帮手。',
-      weakness: '腰旗场地窄(25码)，man defender需要在狭小空间1v1跟人。Slant/Drag利用场地宽度横穿——defender在25码窄场上很难跟住变向。Bunch阵型的自然pick在腰旗中效果极好，因为距离近、空间小，defender很容易被卡住。',
-      deepThreat: 'FS坐中路防deep。腰旗场地短(70码)，deep route只有15-20码就到端区——FS反应时间足够。除非用underneath先骗FS上步，否则post/streak正对FS方向是最危险的选择。',
-      bestPlay: '腰旗对Cover 1: Mesh/Drive（pick play天然克制man）, Bunch + Slant（利用自然挡拆）, Flat + Drag combo（横穿拉开man defender）'
+      concept: 'Cover 1 = 1 rusher + 3人盯人 + 1个Free Safety。只有3个DB盯4个WR——必然有一个WR是没人盯的！找到那个无人盯防的WR就是Cover 1的破解关键。',
+      weakness: '3盯4 = 有一个WR完全open。同时FS站深区中路读QB，underneath没有zone帮忙——slant/drag横穿时只有man defender在跟，没有额外帮手。Bunch阵型的自然pick在腰旗中效果极好，DB在狭小空间很难绕过队友跟人。',
+      deepThreat: 'FS坐中路防deep。Post/streak正对FS是最危险选择——除非先用underneath骗FS上步。但如果你传给那个没人盯的WR，什么路线都是open。',
+      bestPlay: '腰旗对Cover 1: 找到没人盯的WR直接传(最优解), Mesh/Drive利用pick甩开man, Bunch + Slant利用自然挡拆'
     },
     'Cover 2': {
       beaters: ['seam','post','streak','corner'],
-      concept: 'Cover 2 = 2人守深区两侧 + 2人守短区flat。腰旗5v5中4个DB这样分配意味着中路deep完全空。',
-      weakness: '两个deep defender之间有一条大缝隙（场地中央10码宽的区域无人守）。Seam/Post路线直插这个空隙。腰旗场地窄让这个缝隙更致命——WR只需要跑到中间就进入真空区。另外Corner route把safety拉到边线，中路更空。',
-      deepThreat: 'Flat defender守短区,但腰旗中他的活动范围有限。用flat route吸住他,corner/out route就打开了——Smash concept在腰旗中非常好用。',
-      bestPlay: '腰旗对Cover 2: Seam route攻击中路缝隙(腰旗#1 Cover 2杀手), Smash concept(hitch+corner高低), 4 Verticals拉开两个safety'
+      concept: 'Cover 2 = 1 rusher + 2人守深区两侧 + 2人守短区flat。4个DB分配成2deep+2flat，中路deep完全空。',
+      weakness: '两个deep safety之间有一条大缝隙。Seam/Post直插这个中路真空区。腰旗窄场(25码)让这个缝隙更致命——WR跑到中间就没人了。Corner route把safety拉向边线，中路更空。',
+      deepThreat: '2个flat defender守短区。用flat route吸住他，corner/out就打开——这就是Smash concept（hitch+corner高低组合）。',
+      bestPlay: '腰旗对Cover 2: Seam/Post攻击中路缝隙, Smash concept(hitch+corner高低), 4 Verticals拉开两个safety'
     },
     'Cover 3': {
       beaters: ['curl','hitch','out','flat','dig'],
-      concept: 'Cover 3 = 3人守深区 + 1人守underneath。腰旗中3人守deep非常厚——但underneath只有1人守整个短区。',
-      weakness: '1个flat defender要守整个25码宽的短区——不可能。Curl-Flat concept让他二选一：他跟curl你就传flat，他跟flat你就传curl。Dig route(10码横穿)也能穿过underneath进入两个deep zone之间的缝隙。腰旗场地窄让underneath defender更难覆盖侧面。',
-      deepThreat: '3人守deep在70码场地上基本封死了deep ball。不要硬打deep，用underneath蚕食。',
-      bestPlay: '腰旗对Cover 3: Curl-Flat(让flat defender二选一), Flood(flat+out+corner三级高低), Levels(用underneath推进吃码数)'
+      concept: 'Cover 3 = 1 rusher + 3人守深区 + 1人守underneath。3人守deep很厚，但underneath只有1个人守整个25码宽短区。',
+      weakness: '1个flat defender要守25码宽的短区——不可能全覆盖。Curl-Flat concept让他二选一：他跟curl你传flat，他跟flat你传curl。Dig横穿也能找到两个deep zone之间的缝隙。',
+      deepThreat: '3人守deep在腰旗70码场上基本封死deep ball。不要硬打deep，用underneath蚕食。',
+      bestPlay: '腰旗对Cover 3: Curl-Flat(逼flat defender二选一), Flood(三级高低), Levels(用underneath推进)'
     },
     'Cover 4': {
       beaters: ['drag','slant','flat','hitch','dig'],
-      concept: 'Cover 4 = 4人全部守deep(各守1/4深区)。腰旗中这意味着underneath完全放空——没有任何人守短区。',
-      weakness: '短区是真空！Drag/Flat/Hitch = 免费接球。腰旗中这种防守就是赌你打deep——你只要打short game，每档吃5-8码稳稳推进。4个DB全在深区，slant跑出3码就没人了。',
-      deepThreat: '4人守deep+腰旗窄场 = deep ball几乎不可能。每条deep路线都有人。不要尝试。',
-      bestPlay: '腰旗对Cover 4: 任何short route都是答案(drag/flat/hitch), Spacing concept横向拉开, 耐心吃5-8码——对方会被迫换防'
+      concept: 'Cover 4 = 1 rusher + 4人全守deep(各守1/4深区)。underneath完全放空——短区没有任何人。',
+      weakness: '短区真空！Drag/Flat/Hitch = 免费接球。4个DB全在深区，slant跑3码就进入无人区。这种防守赌你打deep——耐心吃短码就赢。',
+      deepThreat: '4人守deep = deep ball几乎不可能。不要尝试，吃underneath。',
+      bestPlay: '腰旗对Cover 4: 任何short route(drag/flat/hitch)都是答案, 耐心5-8码推进——对方会被迫换防'
     },
     'Man Blitz': {
       beaters: ['slant','flat','drag','hitch'],
-      concept: 'Man Blitz = 全员盯人 + 快速冲传。腰旗中rush count通常7秒——blitz会缩短到5秒甚至更短，出手时间被极度压缩。',
-      weakness: '所有DB都背对QB跟人。腰旗中slant是blitz的天敌——1步+bullet出手，DB还在转身时球已经到了。没有进攻锋线保护，QB必须pre-snap就锁定hot read(最近的flat/slant)。Drag/Flat也是hot read好选择。',
-      deepThreat: '腰旗无进攻锋线保护+blitz = deep route是自杀。rush到你面前只要2-3秒,deep route需要4秒+。',
-      bestPlay: '腰旗对Blitz: Pre-snap锁定hot read(slant/flat), 1-step + bullet出手, Spacing拉开man defender. 腰旗中还可以QB scramble——无锋线意味着scramble空间更大'
+      concept: 'Man Blitz = 1快速rusher + 4人全盯人。所有DB都跟人，rush count极短。出手时间被压到最少。',
+      weakness: '4个DB都背对QB跟人。Slant是blitz天敌——1步+bullet出手，DB转身时球已经到了。Pre-snap就要锁定hot read（最近的flat/slant）。',
+      deepThreat: 'Deep route需要4秒+，blitz下rusher2-3秒就到——deep是自杀。',
+      bestPlay: '腰旗对Blitz: Pre-snap锁定hot read(slant/flat), 1步+bullet出手, 或QB scramble找空间'
     }
   };
 
