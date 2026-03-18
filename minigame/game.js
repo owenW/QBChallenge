@@ -3558,7 +3558,7 @@ function drawTitle(dt) {
   ctx.fillText('◆ ROGUELIKE EDITION ◆', W / 2, SAFE.top + 65);
   // Version badge
   drawPixelRect(ctx, W - 42, SAFE.top + 4, 34, 16, 'rgba(212,168,64,0.2)', COL.uiGold);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.fillText('V15', W - 30, SAFE.top + 15);
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.fillText('V23.1', W - 30, SAFE.top + 15);
   ctx.restore();
 
   ctx.strokeStyle = 'rgba(232,220,200,0.15)'; ctx.lineWidth = 1;
@@ -3639,7 +3639,7 @@ function drawTitle(dt) {
   }
 
   ctx.fillStyle = 'rgba(232,220,200,0.25)'; ctx.font = '10px "Courier New"'; ctx.textAlign = 'center';
-  ctx.fillText('V15 QB Tested · 12 Teams · Star Players · 25+ Relics', W / 2, H - 20);
+  ctx.fillText('V23.1 · 12 Teams · QB Coach Mode · 25+ Relics', W / 2, H - SAFE.bottom - 8);
   drawParticles();
 }
 
