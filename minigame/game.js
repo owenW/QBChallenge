@@ -3559,7 +3559,7 @@ function drawTitle(dt) {
   ctx.fillText('◆ ROGUELIKE EDITION ◆', W / 2, SAFE.top + 65);
   // Version badge
   drawPixelRect(ctx, W - 42, SAFE.top + 4, 34, 16, 'rgba(212,168,64,0.2)', COL.uiGold);
-  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.fillText('V23.1', W - 30, SAFE.top + 15);
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 11px "Courier New"'; ctx.fillText('V24', W - 30, SAFE.top + 15);
   ctx.restore();
 
   ctx.strokeStyle = 'rgba(232,220,200,0.15)'; ctx.lineWidth = 1;
@@ -3640,7 +3640,7 @@ function drawTitle(dt) {
   }
 
   ctx.fillStyle = 'rgba(232,220,200,0.25)'; ctx.font = '10px "Courier New"'; ctx.textAlign = 'center';
-  ctx.fillText('V23.1 · 12 Teams · QB Coach Mode · 25+ Relics', W / 2, H - SAFE.bottom - 8);
+  ctx.fillText('V24 · 12 Teams · QB Coach Mode · 25+ Relics', W / 2, H - SAFE.bottom - 8);
   drawParticles();
 }
 
@@ -4340,41 +4340,44 @@ function generateTeachingMoment(lr) {
 
   // ── Route vs Coverage matchup knowledge base ──
   // Which routes beat which coverages, and WHY (scheme-level)
+  // ── 5v5腰旗橄榄球 route vs coverage知识库 ──
+  // 腰旗特点：无进攻锋线, QB直接snap后有rush count(通常7秒), 场地窄(25码宽×70码), 拔旗代替tackle
+  // 所以：(1)出手必须快 (2)没有口袋保护,scramble很重要 (3)短距离quick game是核心 (4)场地窄=横向空间有限
   const routeVsCover = {
     'Cover 1': {
-      beaters: ['slant','drag','flat','crossing'],
-      concept: 'Cover 1 = 3个DB盯人 + 1个Free Safety居中读QB。FS是这个防守的核心——他根据QB的眼神判断传球方向。',
-      weakness: '弱点在underneath：FS站深区，underneath只靠man coverage。快速横穿路线（drag/slant）能在DB还没跟上时完成接球。Bunch/Stack阵型能用pick（自然挡路）干扰man coverage。',
-      deepThreat: 'Deep ball有FS保护——除非你用underneath先把FS骗下来。Post route直冲FS面前是最危险的选择。',
-      bestPlay: '对Cover 1最佳concept: Mesh/Drive（交叉路线制造pick）, Quick Slants（快出手越过man）, Flood（三级高低拉开FS）'
+      beaters: ['slant','drag','flat','post'],
+      concept: 'Cover 1 = 3人盯人 + 1个Free Safety读QB。腰旗5v5中，4个DB覆盖4个WR，FS居中是唯一的额外帮手。',
+      weakness: '腰旗场地窄(25码)，man defender需要在狭小空间1v1跟人。Slant/Drag利用场地宽度横穿——defender在25码窄场上很难跟住变向。Bunch阵型的自然pick在腰旗中效果极好，因为距离近、空间小，defender很容易被卡住。',
+      deepThreat: 'FS坐中路防deep。腰旗场地短(70码)，deep route只有15-20码就到端区——FS反应时间足够。除非用underneath先骗FS上步，否则post/streak正对FS方向是最危险的选择。',
+      bestPlay: '腰旗对Cover 1: Mesh/Drive（pick play天然克制man）, Bunch + Slant（利用自然挡拆）, Flat + Drag combo（横穿拉开man defender）'
     },
     'Cover 2': {
       beaters: ['seam','post','streak','corner'],
-      concept: 'Cover 2 = 2个Safety分守两侧深区 + 2个Flat Defender守短区。中间深区（seam area）是最大漏洞。',
-      weakness: '两个safety之间有一条12-15码宽的中路缝隙。Seam/Post路线直接攻击这个缝隙。另外Corner route可以把safety拉向边线，打开中路。',
-      deepThreat: 'Flat defender守underneath，deep由safety负责。如果先用flat route把flat defender吸住，deep out/corner就打开了——这就是Smash concept。',
-      bestPlay: '对Cover 2最佳concept: Smash（hitch+corner高低组合）, 4 Verticals（seam route攻击中路缝隙）, Post route打两个safety之间'
+      concept: 'Cover 2 = 2人守深区两侧 + 2人守短区flat。腰旗5v5中4个DB这样分配意味着中路deep完全空。',
+      weakness: '两个deep defender之间有一条大缝隙（场地中央10码宽的区域无人守）。Seam/Post路线直插这个空隙。腰旗场地窄让这个缝隙更致命——WR只需要跑到中间就进入真空区。另外Corner route把safety拉到边线，中路更空。',
+      deepThreat: 'Flat defender守短区,但腰旗中他的活动范围有限。用flat route吸住他,corner/out route就打开了——Smash concept在腰旗中非常好用。',
+      bestPlay: '腰旗对Cover 2: Seam route攻击中路缝隙(腰旗#1 Cover 2杀手), Smash concept(hitch+corner高低), 4 Verticals拉开两个safety'
     },
     'Cover 3': {
       beaters: ['curl','hitch','out','flat','dig'],
-      concept: 'Cover 3 = 3个DB守深区三等分 + 1个Flat Defender守underneath。深区三人覆盖很强，underneath相对薄弱。',
-      weakness: 'Flat defender只有一个——他负责的短区面积很大。Curl/Flat组合（Curl-Flat concept）让他只能选一个。Dig route穿过underneath进入两个deep zone之间也很有效。',
-      deepThreat: '三人深区覆盖让单纯的deep ball很难成功。但如果用underneath先吸引flat defender，corner/post的结合可以攻击deep zone之间的缝隙。',
-      bestPlay: '对Cover 3最佳concept: Curl-Flat（让flat defender二选一）, Flood（三级路线淹没两人区域）, Levels（高低分层攻击underneath）'
+      concept: 'Cover 3 = 3人守深区 + 1人守underneath。腰旗中3人守deep非常厚——但underneath只有1人守整个短区。',
+      weakness: '1个flat defender要守整个25码宽的短区——不可能。Curl-Flat concept让他二选一：他跟curl你就传flat，他跟flat你就传curl。Dig route(10码横穿)也能穿过underneath进入两个deep zone之间的缝隙。腰旗场地窄让underneath defender更难覆盖侧面。',
+      deepThreat: '3人守deep在70码场地上基本封死了deep ball。不要硬打deep，用underneath蚕食。',
+      bestPlay: '腰旗对Cover 3: Curl-Flat(让flat defender二选一), Flood(flat+out+corner三级高低), Levels(用underneath推进吃码数)'
     },
     'Cover 4': {
       beaters: ['drag','slant','flat','hitch','dig'],
-      concept: 'Cover 4 (Quarters) = 4个DB各守1/4深区。underneath完全放空——这是纯防deep的战术。',
-      weakness: '没有underneath defender！短传路线（drag/flat/hitch）是免费码数。4个人全守deep意味着underneath是你的后花园。',
-      deepThreat: 'Deep ball在Cover 4下极难成功——4个人守deep意味着每条deep路线都有人跟。不要尝试，吃underneath。',
-      bestPlay: '对Cover 4最佳concept: Quick Drag（underneath无人）, Spacing（横向拉开短区）, Flat/Screen（利用underneath真空）, 耐心吃5-8码推进'
+      concept: 'Cover 4 = 4人全部守deep(各守1/4深区)。腰旗中这意味着underneath完全放空——没有任何人守短区。',
+      weakness: '短区是真空！Drag/Flat/Hitch = 免费接球。腰旗中这种防守就是赌你打deep——你只要打short game，每档吃5-8码稳稳推进。4个DB全在深区，slant跑出3码就没人了。',
+      deepThreat: '4人守deep+腰旗窄场 = deep ball几乎不可能。每条deep路线都有人。不要尝试。',
+      bestPlay: '腰旗对Cover 4: 任何short route都是答案(drag/flat/hitch), Spacing concept横向拉开, 耐心吃5-8码——对方会被迫换防'
     },
     'Man Blitz': {
       beaters: ['slant','flat','drag','hitch'],
-      concept: 'Man Blitz = 全员盯人 + 快速冲传。口袋时间极短（1.5-2秒），但所有DB都跟人走，背对QB。',
-      weakness: 'DB跟人时背对QB——quick route让DB来不及反应。Slant/Drag利用DB转身瞬间完成接球。关键是出手速度：pre-snap就要锁定hot read。',
-      deepThreat: 'Deep route需要3+秒口袋时间，blitz下根本没有。除非对方blitz失误留出时间，否则不要考虑deep。',
-      bestPlay: '对Man Blitz最佳concept: Quick Slants（1-step drop + bullet）, Hot Route（pre-snap锁定flat/hitch）, Spacing（拉开man defender间距）'
+      concept: 'Man Blitz = 全员盯人 + 快速冲传。腰旗中rush count通常7秒——blitz会缩短到5秒甚至更短，出手时间被极度压缩。',
+      weakness: '所有DB都背对QB跟人。腰旗中slant是blitz的天敌——1步+bullet出手，DB还在转身时球已经到了。没有进攻锋线保护，QB必须pre-snap就锁定hot read(最近的flat/slant)。Drag/Flat也是hot read好选择。',
+      deepThreat: '腰旗无进攻锋线保护+blitz = deep route是自杀。rush到你面前只要2-3秒,deep route需要4秒+。',
+      bestPlay: '腰旗对Blitz: Pre-snap锁定hot read(slant/flat), 1-step + bullet出手, Spacing拉开man defender. 腰旗中还可以QB scramble——无锋线意味着scramble空间更大'
     }
   };
 
@@ -4392,10 +4395,10 @@ function generateTeachingMoment(lr) {
     lines.push(`损失${lr.sackYards || 5}码 | ${lr.coverName}`);
     if (lr.rushFast) lines.push('⚡ 快速冲传');
     if (coverInfo) {
-      tip = `🏈 ${lr.coverName}下被sack。${lr.coverName === 'Man Blitz' ? 'Blitz的本质是用冲传人数换口袋时间——你必须在1.5秒内出手。Pre-snap就要识别blitz（DB贴近LOS、LB前移），锁定hot read（通常是离QB最近的flat/slant）。' : '被sack说明持球太久。读防顺序：第一读→第二读→check down，不要超过3秒。'}`;
+      tip = `🏈 ${lr.coverName}下被sack。${lr.coverName === 'Man Blitz' ? '腰旗Blitz = rush count缩短到5秒以内。没有进攻锋线保护，rusher直线冲过来。Pre-snap就要识别blitz（DB全贴近LOS），锁定hot read（最近的flat/slant），snap后1步直接bullet出手。腰旗中QB也可以选择scramble——场地空旷，跑出空间后再传。' : '腰旗中被sack说明持球超过rush count。没有进攻锋线，rusher过了rush count就自由冲传。读防要快：第一读→第二读→scramble或扔掉，全程不超过5秒。'}`;
       tip += ` ${coverInfo.bestPlay}`;
     } else {
-      tip = '🏈 持球时间太长。建议：pre-snap锁定hot read（快出手选项），如果前两个read没有空，立刻check down到flat/hitch。';
+      tip = '🏈 超过rush count被sack。腰旗没有锋线保护，QB要在7秒内完成传球。建议：pre-snap就锁定hot read，snap后快速1-2-3读防，没有就scramble找空间或扔掉。腰旗QB的scramble能力很重要——场地空旷，跑出空间比硬站着强。';
     }
 
   // ── INT ──
@@ -4430,7 +4433,7 @@ function generateTeachingMoment(lr) {
     if (lr.throwMomentProgress < 0.6) {
       tip = `🏈 出手太早。${rl}的break point在路线70-85%位置——WR在这个点变向/转身，传球要在break point前1步出手（anticipation throw），球到的时候WR刚好转过来。你在${Math.round(lr.throwMomentProgress*100)}%就出手，WR还在直线跑，球和人走向不同。`;
     } else {
-      tip = `🏈 出手时机OK但球偏了。${deep ? 'Deep throw对ARM要求高——距离越远精度越差。如果QB臂力不够，用touch pass替代lob，或者选中距离路线（dig/curl）减少传球距离。' : '短传偏离通常是冲传干扰导致。如果面对强冲传，提前锁定目标，不要在pocket被压缩时才出手。'}`;
+      tip = `🏈 出手时机OK但球偏了。${deep ? '腰旗场地70码，deep throw距离15-20码对ARM要求高。如果QB臂力不够，用touch pass替代lob，或者选中距离路线（dig/curl 10码左右）更稳。' : '短传偏离可能是rusher压力下仓促出手。腰旗中要提前锁定目标——snap前就读好防守，出手不犹豫。'}`;
     }
 
   // ── SUCCESS ──
