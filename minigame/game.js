@@ -4088,26 +4088,27 @@ function drawLivePassTypeOverlay() {
   const maxRushDist = 10; // starting distance roughly
   const urgency = 1 - Math.min(1, Math.max(0, rushDistNow / maxRushDist));
   
-  // Semi-transparent backdrop at bottom (raised 30px for easier thumb reach)
+  // Semi-transparent backdrop at bottom (raised for thumb reach + safe area)
+  const _passBottom = SAFE.bottom + 60; // raise above home indicator
   ctx.save();
   ctx.fillStyle = `rgba(0,0,0,${0.3 + urgency * 0.3})`;
-  ctx.fillRect(0, H - 120, W, 90);
+  ctx.fillRect(0, H - _passBottom - 60, W, 90);
   
   // Urgency bar
   const barColor = urgency < 0.4 ? '#4CAF50' : urgency < 0.7 ? '#FF9800' : '#F44336';
-  ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(20, H - 118, W - 40, 4);
-  ctx.fillStyle = barColor; ctx.fillRect(20, H - 118, (W - 40) * (1 - urgency), 4);
+  ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(20, H - _passBottom - 58, W - 40, 4);
+  ctx.fillStyle = barColor; ctx.fillRect(20, H - _passBottom - 58, (W - 40) * (1 - urgency), 4);
   
   // Label
   ctx.fillStyle = urgency > 0.7 ? '#F44336' : '#fff';
   ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
   const urgencyText = urgency > 0.7 ? '⚠️ 快出手！冲传逼近！' : urgency > 0.4 ? '选择传球方式...' : '口袋干净 - 选择传球方式';
-  ctx.fillText(urgencyText, W / 2, H - 106);
+  ctx.fillText(urgencyText, W / 2, H - _passBottom - 46);
   
   // Route progress indicator
   const routePct = Math.round(sim.routeProgress * 100);
   ctx.fillStyle = '#aaa'; ctx.font = '11px "Courier New"';
-  ctx.fillText(`线路进度: ${routePct}%`, W / 2, H - 96);
+  ctx.fillText(`线路进度: ${routePct}%`, W / 2, H - _passBottom - 36);
   
   // Pass type buttons
   const types = [
@@ -4116,7 +4117,7 @@ function drawLivePassTypeOverlay() {
     { type: 'lob', label: '🔵 高抛', desc: '深传', color: COL.lobBlue },
   ];
   const btnW = 120, spacing = 10, totalBW = 3 * btnW + 2 * spacing;
-  const startBX = (W - totalBW) / 2, bY = H - 88;
+  const startBX = (W - totalBW) / 2, bY = H - _passBottom - 28;
   for (let i = 0; i < 3; i++) {
     const t = types[i], bx = startBX + i * (btnW + spacing);
     const btn = { x: bx, y: bY, w: btnW, h: 44, action: `pass_${t.type}` };
