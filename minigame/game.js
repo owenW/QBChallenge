@@ -3048,6 +3048,14 @@ function handlePlayResult() {
       bestWRIdx: currentPlay ? currentPlay.bestWR : -1,
       rushFast: currentPlay ? currentPlay.rushFast : false,
       offenseName: currentPlay ? currentPlay.offense.name : '',
+      // Which WR is unguarded (Cover 1: 3 man + 1 FS = 1 WR free)
+      unguardedWR: (() => {
+        if (!defense || (coverType !== 'man' && coverType !== 'blitz')) return -1;
+        const manDBs = defense.dbs.filter(db => db.role === 'man');
+        const coveredWRs = new Set(manDBs.map(db => db.coverIdx).filter(i => i >= 0));
+        for (let wi = 0; wi < 4; wi++) { if (!coveredWRs.has(wi)) return wi; }
+        return -1;
+      })(),
     };
   }
 
@@ -4364,11 +4372,11 @@ function generateTeachingMoment(lr) {
   // 所以：(1)出手必须快 (2)没有口袋保护,scramble很重要 (3)短距离quick game是核心 (4)场地窄=横向空间有限
   const routeVsCover = {
     'Cover 1': {
-      beaters: ['slant','drag','flat','post'],
-      concept: 'Cover 1 = 1 rusher + 3人盯人 + 1个Free Safety。只有3个DB盯4个WR——必然有一个WR是没人盯的！找到那个无人盯防的WR就是Cover 1的破解关键。',
-      weakness: '3盯4 = 有一个WR完全open。同时FS站深区中路读QB，underneath没有zone帮忙——slant/drag横穿时只有man defender在跟，没有额外帮手。Bunch阵型的自然pick在腰旗中效果极好，DB在狭小空间很难绕过队友跟人。',
-      deepThreat: 'FS坐中路防deep。Post/streak正对FS是最危险选择——除非先用underneath骗FS上步。但如果你传给那个没人盯的WR，什么路线都是open。',
-      bestPlay: '腰旗对Cover 1: 找到没人盯的WR直接传(最优解), Mesh/Drive利用pick甩开man, Bunch + Slant利用自然挡拆'
+      beaters: ['slant','drag','flat','streak','curl','hitch','out'],
+      concept: 'Cover 1 = 1 rusher + 3人盯人 + 1个FS。3人盯4个WR——有一个WR完全没人盯！找到那个open WR就是Cover 1的关键。',
+      weakness: '3盯4 = 必然有一个WR是free的，无论他跑什么路线都是open。FS站中路深区读QB——Post直飞FS面前是最差选择。被盯的3个WR中，slant/drag利用DB转身瞬间也能接球。',
+      deepThreat: 'FS守中路deep。Post/seam直冲FS正面，被读死概率极高。如果要打deep，选边线方向的streak/corner避开FS——或者直接传给没人盯的WR。',
+      bestPlay: '腰旗对Cover 1: 找到没人盯的WR(最优解), 被盯的WR用slant/drag快出手越过man'
     },
     'Cover 2': {
       beaters: ['seam','post','streak','corner'],
@@ -4402,12 +4410,15 @@ function generateTeachingMoment(lr) {
 
   const coverInfo = routeVsCover[lr.coverName] || null;
   const isRouteBeater = coverInfo ? coverInfo.beaters.includes(lr.route) : false;
-  // Get all routes in the current play (from allWRScores)
   const conceptRoutes = lr.allWRScores.map(w => w.route);
   const hasBeaterInConcept = coverInfo ? conceptRoutes.some(r => coverInfo.beaters.includes(r)) : false;
-  // Find available beaters in THIS play (for concrete recommendations)
   const availableBeaters = coverInfo ? lr.allWRScores.filter(w => coverInfo.beaters.includes(w.route)) : [];
   const beaterListStr = availableBeaters.map(w => `${w.name}的${RN[w.route]||w.route}`).join('、');
+  // Cover 1 special: identify unguarded WR
+  const ungWR = lr.unguardedWR;
+  const choseUnguarded = ungWR >= 0 && lr.chosenWR === ungWR;
+  const ungWRName = ungWR >= 0 && lr.allWRScores.find(w => w.idx === ungWR);
+  const ungWRStr = ungWRName ? `${ungWRName.name}的${RN[ungWRName.route]||ungWRName.route}` : '';
 
   let title = '', lines = [], tip = '';
 
@@ -4429,20 +4440,23 @@ function generateTeachingMoment(lr) {
     title = '🎓 INT 复盘';
     lines.push(`${rl} → ${lr.wrName} | ${lr.coverName}`);
     lines.push(`传球: ${pl} | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
-    if (coverInfo) {
-      if (isRouteBeater) {
+    if (ungWR >= 0 && !choseUnguarded && lr.coverName === 'Cover 1') {
+      // Cover 1: chose a guarded WR instead of the open one
+      tip = `🏈 Cover 1只有3人盯人，${ungWRStr}是完全没人盯的！你传给了被盯防的${lr.wrName}。Cover 1的第一读永远是找到那个free WR——无论他跑什么路线，没人盯就是open。`;
+    } else if (coverInfo) {
+      if (choseUnguarded) {
+        tip = `🏈 你选了没人盯的${lr.wrName}，读防正确！但被INT——可能是出手时机或FS读到了传球方向。${lr.route === 'post' || lr.route === 'seam' ? 'Post/Seam直冲FS所在的中路深区，即使没人盯人，FS也能靠位置读球拦截。往边线方向的路线（out/corner/streak）能避开FS。' : `出手时机${lr.throwMomentProgress < 0.65 ? '太早' : '没问题'}，${lr.passType === 'lob' ? 'Lob球给了FS反应时间，换Bullet' : '可能是FS读到了你的眼神——腰旗中尝试look-off（先看一侧再传另一侧）'}`}`;
+      } else if (isRouteBeater) {
         tip = `🏈 ${rl}理论上是对${lr.coverName}的正确选择，但被抄截。路线选对了，问题在执行：`;
         if (lr.throwMomentProgress < 0.65) tip += `出手太早（路线只完成${Math.round(lr.throwMomentProgress*100)}%），WR还没到break point。`;
         else if (lr.passType === 'lob') tip += '传球类型错误——contested throw不要用Lob，用Bullet减少DB反应窗口。';
-        else tip += `DB距离${lr.closestDBDist.toFixed(1)}码，可能WR没有跑出足够分离。检查WR的SPD/RTE属性，或者选信任值更高的WR。`;
+        else tip += `DB距离${lr.closestDBDist.toFixed(1)}码，可能WR没有跑出足够分离。`;
       } else {
         tip = `🏈 ${rl}不是攻击${lr.coverName}的最佳路线。${coverInfo.concept} ${deep ? coverInfo.deepThreat : coverInfo.weakness}`;
-        if (availableBeaters.length > 0) {
-          tip += ` 📊 本档克制路线: ${beaterListStr}`;
-        }
+        if (availableBeaters.length > 0) tip += ` 📊 本档克制路线: ${beaterListStr}`;
       }
     } else {
-      tip = `🏈 被抄截。DB距离仅${lr.closestDBDist.toFixed(1)}码——传向tight coverage是高风险决策。读防原则：先看有没有open receiver，没有就check down或扔掉。`;
+      tip = `🏈 被抄截。DB距离仅${lr.closestDBDist.toFixed(1)}码——传向tight coverage是高风险决策。`;
     }
 
   // ── OVERTHROWN ──
@@ -4461,7 +4475,9 @@ function generateTeachingMoment(lr) {
     title = '🎓 ✓ 传球成功';
     lines.push(`${rl} → ${lr.wrName} +${lr.yardsGained}码`);
     lines.push(`${lr.coverName} | ${pl} | 成功率${Math.round(lr.catchProb)}%`);
-    if (coverInfo) {
+    if (choseUnguarded && lr.coverName === 'Cover 1') {
+      tip = `🏈 完美读防！Cover 1只有3人盯人，你找到了没人盯的${lr.wrName}直接传球得手。这就是对Cover 1的正确打法——第一读永远找free WR。`;
+    } else if (coverInfo) {
       if (isRouteBeater) {
         tip = `🏈 教科书般的读防。${lr.coverName}的落位决定了${rl}能打出空间：${coverInfo.weakness}`;
         if (lr.yacYards > 3) tip += ` 接球后+${lr.yacYards}码YAC——open catch=更多跑动空间，这就是选对路线的价值。`;
@@ -4482,7 +4498,11 @@ function generateTeachingMoment(lr) {
     title = '🎓 INCOMPLETE';
     lines.push(`${rl} → ${lr.wrName} | ${lr.coverName}`);
     lines.push(`${pl} | 成功率${Math.round(lr.catchProb)}% | DB距离${lr.closestDBDist.toFixed(1)}码`);
-    if (coverInfo) {
+    if (ungWR >= 0 && !choseUnguarded && lr.coverName === 'Cover 1') {
+      tip = `🏈 Cover 1只有3人盯人，${ungWRStr}完全没人盯！你传给了被盯防的${lr.wrName}（DB距离${lr.closestDBDist.toFixed(1)}码）。下次面对Cover 1，第一读找free WR——他无论跑什么路线都是open。`;
+    } else if (choseUnguarded && lr.coverName === 'Cover 1') {
+      tip = `🏈 读防正确——你找到了没人盯的${lr.wrName}。没接住可能是执行问题：${lr.throwMomentProgress < 0.65 ? '出手太早' : lr.passType === 'lob' ? 'Lob球滞空太久，用Bullet' : '运气因素，继续这样读防'}。对Cover 1找到free WR是最优解，坚持这个思路。`;
+    } else if (coverInfo) {
       if (isRouteBeater) {
         tip = `🏈 路线选择正确（${rl}克制${lr.coverName}），但未完成。问题在于执行而非读防：`;
         if (lr.throwMomentProgress < 0.65) tip += `出手太早（${Math.round(lr.throwMomentProgress*100)}%）——等到break point再出手。`;
