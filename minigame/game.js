@@ -1894,6 +1894,25 @@ function generatePlay(isElite, isBoss) {
     }
   }
 
+  // V24: Guarantee at least one route is a coverage beater (for teaching validity)
+  const _coverBeaters = {
+    'Cover 1': ['slant','drag','flat','post'],
+    'Cover 2': ['seam','post','streak','corner'],
+    'Cover 3': ['curl','hitch','out','flat','dig'],
+    'Cover 4': ['drag','slant','flat','hitch','dig'],
+    'Man Blitz': ['slant','flat','drag','hitch'],
+  };
+  const _beaters = _coverBeaters[defense.name] || null;
+  if (_beaters) {
+    const currentRoutes = offense.wrs.map(w => w.route);
+    const hasBeater = currentRoutes.some(r => _beaters.includes(r));
+    if (!hasBeater) {
+      // Pick a random WR and swap their route to a random beater
+      const swapIdx = Math.floor(Math.random() * 4);
+      offense.wrs[swapIdx].route = _beaters[Math.floor(Math.random() * _beaters.length)];
+    }
+  }
+
   const wrScores = evaluateReceivers(offense, defense, isElite, isBoss);
   const bestWR = wrScores.indexOf(Math.max(...wrScores));
 
@@ -4383,9 +4402,12 @@ function generateTeachingMoment(lr) {
 
   const coverInfo = routeVsCover[lr.coverName] || null;
   const isRouteBeater = coverInfo ? coverInfo.beaters.includes(lr.route) : false;
-  // Get all routes in the concept (from allWRScores)
+  // Get all routes in the current play (from allWRScores)
   const conceptRoutes = lr.allWRScores.map(w => w.route);
   const hasBeaterInConcept = coverInfo ? conceptRoutes.some(r => coverInfo.beaters.includes(r)) : false;
+  // Find available beaters in THIS play (for concrete recommendations)
+  const availableBeaters = coverInfo ? lr.allWRScores.filter(w => coverInfo.beaters.includes(w.route)) : [];
+  const beaterListStr = availableBeaters.map(w => `${w.name}的${RN[w.route]||w.route}`).join('、');
 
   let title = '', lines = [], tip = '';
 
@@ -4396,7 +4418,8 @@ function generateTeachingMoment(lr) {
     if (lr.rushFast) lines.push('⚡ 快速冲传');
     if (coverInfo) {
       tip = `🏈 ${lr.coverName}下被sack。${lr.coverName === 'Man Blitz' ? '腰旗Blitz = rush count缩短到5秒以内。没有进攻锋线保护，rusher直线冲过来。Pre-snap就要识别blitz（DB全贴近LOS），锁定hot read（最近的flat/slant），snap后1步直接bullet出手。腰旗中QB也可以选择scramble——场地空旷，跑出空间后再传。' : '腰旗中被sack说明持球超过rush count。没有进攻锋线，rusher过了rush count就自由冲传。读防要快：第一读→第二读→scramble或扔掉，全程不超过5秒。'}`;
-      tip += ` ${coverInfo.bestPlay}`;
+      if (availableBeaters.length > 0) tip += ` 本档快出手选项: ${beaterListStr}`;
+      else tip += ` ${coverInfo.bestPlay}`;
     } else {
       tip = '🏈 超过rush count被sack。腰旗没有锋线保护，QB要在7秒内完成传球。建议：pre-snap就锁定hot read，snap后快速1-2-3读防，没有就scramble找空间或扔掉。腰旗QB的scramble能力很重要——场地空旷，跑出空间比硬站着强。';
     }
@@ -4414,11 +4437,8 @@ function generateTeachingMoment(lr) {
         else tip += `DB距离${lr.closestDBDist.toFixed(1)}码，可能WR没有跑出足够分离。检查WR的SPD/RTE属性，或者选信任值更高的WR。`;
       } else {
         tip = `🏈 ${rl}不是攻击${lr.coverName}的最佳路线。${coverInfo.concept} ${deep ? coverInfo.deepThreat : coverInfo.weakness}`;
-        if (hasBeaterInConcept) {
-          const better = lr.allWRScores.find(w => coverInfo.beaters.includes(w.route));
-          if (better) tip += ` 本档更优选择: ${better.name}的${RN[better.route]||better.route}——这才是${lr.coverName}的克制路线。`;
-        } else {
-          tip += ` ${coverInfo.bestPlay}`;
+        if (availableBeaters.length > 0) {
+          tip += ` 📊 本档克制路线: ${beaterListStr}`;
         }
       }
     } else {
@@ -4447,7 +4467,11 @@ function generateTeachingMoment(lr) {
         if (lr.yacYards > 3) tip += ` 接球后+${lr.yacYards}码YAC——open catch=更多跑动空间，这就是选对路线的价值。`;
       } else {
         tip = `🏈 ${rl}不是对${lr.coverName}的传统克制路线，但成功了——${lr.closestDBDist > 8 ? '防守执行出了问题，你利用了他们的漏洞' : '强行完成了一次困难接球，不是每次都能成功'}。`;
-        tip += ` 了解一下更稳的选择：${coverInfo.weakness} ${coverInfo.bestPlay}`;
+        if (availableBeaters.length > 0) {
+          tip += ` 下次可以优先选: ${beaterListStr}——这些才是${lr.coverName}的克制路线。`;
+        } else {
+          tip += ` ${coverInfo.weakness}`;
+        }
       }
     } else {
       tip = `🏈 传球成功+${lr.yardsGained}码。DB距离${lr.closestDBDist.toFixed(1)}码${lr.closestDBDist > 8 ? '——完全open，读防正确' : '——空间不大，执行优秀'}。`;
@@ -4476,11 +4500,9 @@ function generateTeachingMoment(lr) {
         } else {
           tip += ` ${coverInfo.weakness}`;
         }
-        if (hasBeaterInConcept) {
-          const better = lr.allWRScores.find(w => coverInfo.beaters.includes(w.route));
-          if (better) tip += ` 📊 ${better.name}的${RN[better.route]||better.route}是对${lr.coverName}的克制路线。`;
+        if (availableBeaters.length > 0) {
+          tip += ` 📊 本档克制路线: ${beaterListStr}`;
         }
-        tip += ` ${coverInfo.bestPlay}`;
       }
     } else {
       tip = `🏈 传球未完成。成功率${Math.round(lr.catchProb)}%${lr.catchProb > 60 ? '——选择没问题，执行或运气' : '——分离度不够，需要找更好的route-coverage匹配'}。`;
