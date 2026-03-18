@@ -2929,17 +2929,47 @@ function handlePlayResult() {
   // V22: Store play result data FIRST (before any early returns that null sim)
   if (sim) {
     let teachClosestDB = 999;
+    let teachClosestDBIdx = -1;
+    const LTOY_T = 0.42;
+    const dbDistances = [];
+    const dbPreSnapCushions = [];
     if (!sim.isSack) {
-      const LTOY_T = 0.42;
       for (let ti = 0; ti < 4; ti++) {
         const tdb = sim.dbEntities[ti];
         const twr = sim.wrEntities[sim.chosenWR];
         const tdy = tdb.yard - twr.yard;
         const tdl = (tdb.lane - twr.lane) * LTOY_T;
         const tdist = Math.sqrt(tdy * tdy + tdl * tdl);
-        if (tdist < teachClosestDB) teachClosestDB = tdist;
+        dbDistances.push(tdist);
+        if (tdist < teachClosestDB) { teachClosestDB = tdist; teachClosestDBIdx = ti; }
       }
     }
+    const defense = currentPlay ? currentPlay.defense : null;
+    let coverName = '', coverType = '';
+    let hasDeepSafety = false, hasFlatDefender = false;
+    if (defense) {
+      coverName = defense.name || '';
+      coverType = defense.coverType || '';
+      hasDeepSafety = defense.dbs.some(db => db.role === 'deep');
+      hasFlatDefender = defense.dbs.some(db => db.role === 'flat');
+      for (let di = 0; di < defense.dbs.length; di++) {
+        const db = defense.dbs[di];
+        const wrSnap = currentPlay.offense.wrs[sim.chosenWR];
+        const dy = db.yard - wrSnap.yard;
+        const dl = (db.lane - wrSnap.lane) * LTOY_T;
+        dbPreSnapCushions.push({ dist: Math.sqrt(dy*dy + dl*dl), role: db.role, coverIdx: db.coverIdx });
+      }
+    }
+    let manCoverDB = null;
+    if (defense && (coverType === 'man' || coverType === 'blitz')) {
+      const coveringDB = dbPreSnapCushions.find(d => d.coverIdx === sim.chosenWR);
+      if (coveringDB) manCoverDB = coveringDB;
+    }
+    const allWRScores = currentPlay ? currentPlay.wrScores.map((s, i) => ({
+      idx: i, score: s, name: wrs[i].name, route: currentPlay.offense.wrs[i].route
+    })).sort((a, b) => b.score - a.score) : [];
+    const throwMomentProgress = game.throwMomentRouteProgress || 0;
+
     game.lastPlayResult = {
       success: sim.success, isINT: sim.isINT, isSack: sim.isSack,
       yardsGained: sim.yardsGained, yacYards: sim.yacYards, yacType: sim.yacType,
@@ -2955,6 +2985,14 @@ function handlePlayResult() {
       scrambleResult: game.scrambleResult,
       teamName: getCurrentTeam().name,
       routeYards: sim.routeYards || 0,
+      coverName, coverType,
+      hasDeepSafety, hasFlatDefender,
+      manCoverDB,
+      dbPreSnapCushions,
+      allWRScores,
+      throwMomentProgress,
+      bestWRIdx: currentPlay ? currentPlay.bestWR : -1,
+      rushFast: currentPlay ? currentPlay.rushFast : false,
     };
   }
 
@@ -4252,97 +4290,270 @@ function drawPlayResult() {
 function generateTeachingMoment(lr) {
   if (!lr) return { title: '', lines: [], tip: '' };
   const routeNames = {
-    post: 'POST（斜切深区）', slant: 'SLANT（斜切短传）', flat: 'FLAT（平飞短传）',
-    streak: 'STREAK（直线冲刺）', drag: 'DRAG（横穿底线）', out: 'OUT（外切）',
-    curl: 'CURL（回身接球）', corner: 'CORNER（角线深传）', wheel: 'WHEEL（弧线深传）',
-    hitch: 'HITCH（急停回转）', dig: 'DIG（内切横穿）', seam: 'SEAM（接缝路线）',
+    post: 'POST', slant: 'SLANT', flat: 'FLAT', streak: 'STREAK/GO',
+    drag: 'DRAG', out: 'OUT', curl: 'CURL', corner: 'CORNER',
+    wheel: 'WHEEL', hitch: 'HITCH', dig: 'DIG', seam: 'SEAM',
   };
-  const passNames = { bullet: '子弹传球', lob: '高吊传球', touch: '触传', normal: '标准传球' };
+  const passNames = { bullet: 'Bullet', lob: 'Lob', touch: 'Touch' };
   const routeLabel = routeNames[lr.route] || lr.route;
-  const passLabel = passNames[lr.passType] || lr.passType;
-  const coverLabel = lr.coverageIsMan ? '盯人防守' : '区域防守';
+  const passLabel = passNames[lr.passType] || lr.passType || 'Touch';
+  const deep = isDeepRoute(lr.route);
+  const short = isShortRoute(lr.route);
+  const cushion = lr.manCoverDB ? lr.manCoverDB.dist : null;
 
   let title = '', lines = [], tip = '';
 
+  // --- SACK ---
   if (lr.isSack) {
-    title = '📖 被擒杀分析';
-    lines.push(`你的QB被擒杀，损失${lr.sackYards || 5}码。`);
+    title = '🎓 擒杀复盘';
+    lines.push(`QB被擒杀 -${lr.sackYards || 5}码`);
+    lines.push(`防守: ${lr.coverName} (${lr.coverType})`);
+    if (lr.rushFast) lines.push('⚡ 对方启用快速冲传');
     if (lr.scrambleResult === 'stand_tall') {
-      lines.push('你选择了硬顶口袋，但冲传压力太大。');
-      tip = '💡 面对强力冲传时，优先考虑左右闪避而不是硬站。快速出手的短传（bullet + slant/flat）也能在压力下完成。';
+      tip = '🏈 你硬站口袋被吃了sack。面对快速冲传，两个选择：(1) 预判冲传方向做反向闪避 (2) 直接选hot route（flat/hitch），在冲传到之前bullet出手。口袋时间只有2-3秒，deep route在强冲传下是陷阱。';
     } else {
-      lines.push('冲传手突破了进攻锋线的保护。');
-      tip = '💡 当对方有强力冲传时，选择出手快的路线（slant, flat, hitch），配合bullet传球能最快完成进攻。';
+      tip = '🏈 冲传突破了保护。快速冲传下要改变打法：选flat/slant/hitch这种1-2秒就能完成的路线，配合bullet传球。deep route需要3+秒口袋时间，面对blitz打deep就是送sack。';
     }
+
+  // --- INT ---
   } else if (lr.isINT) {
-    title = '📖 被抄截分析';
-    lines.push(`传向${lr.wrName}的${routeLabel}被防守拦截。`);
-    lines.push(`传球方式: ${passLabel} | 防守: ${coverLabel}`);
-    if (lr.closestDBDist < 3) {
-      lines.push(`最近防守距离仅${lr.closestDBDist.toFixed(1)}码，处于紧贴防守状态。`);
-      tip = '💡 防守球员紧贴时，INT风险极高。在这种情况下应该读防选择更空的接球手，或者用bullet传球缩小被抄截窗口。';
-    } else if (lr.passType === 'lob') {
-      lines.push('高吊传球给了防守额外的反应时间。');
-      tip = '💡 高吊球虽然适合深区传球，但会给防守球员更多时间去抢断。中短距离优先用bullet或touch传球。';
-    } else {
-      lines.push('防守成功读懂了你的传球意图。');
-      tip = '💡 避免重复选择同一个接球手——防守会适应你的倾向（adaptive tracking）。分散传球目标是减少INT的关键。';
-    }
-  } else if (lr.overthrown) {
-    title = '📖 传球偏离分析';
-    lines.push(`传向${lr.wrName}的${routeLabel}严重偏离目标。`);
-    lines.push(`传球方式: ${passLabel}`);
-    tip = '💡 传球偏离通常是因为出手时机不对。在接球手跑完路线之前（route progress < 70%）出手会导致球飞向错误位置。等接球手进入路线终点再出手。';
-  } else if (lr.success) {
-    title = '📖 传球成功分析';
-    lines.push(`${lr.wrName}通过${routeLabel}接球成功！`);
-    lines.push(`推进${lr.yardsGained}码 (路线${lr.routeYards || 0}码 + YAC ${lr.yacYards || 0}码)`);
-    lines.push(`传球方式: ${passLabel} | 防守: ${coverLabel}`);
-    lines.push(`接球成功率: ${Math.round(lr.catchProb)}% | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
+    title = '🎓 抄截复盘';
+    lines.push(`${routeLabel} → ${lr.wrName} | 被拦截`);
+    lines.push(`防守: ${lr.coverName} | 传球: ${passLabel}`);
+    if (cushion !== null) lines.push(`盯防DB赛前距离: ${cushion.toFixed(1)}码`);
+    lines.push(`接球时DB距离: ${lr.closestDBDist.toFixed(1)}码`);
 
-    if (lr.closestDBDist > 10) {
-      tip = '💡 漂亮的读防！你找到了防守中的空隙。这种"wide open"的接球几乎不可能失误，说明你的路线-防守匹配读得很准。';
-    } else if (lr.closestDBDist > 5) {
-      tip = '💡 不错的选择。接球手有合理的分离空间。继续寻找这种中等空间的传球机会——稳定是四分卫最重要的品质。';
-    } else {
-      tip = '💡 这是一次勇敢的传球！虽然成功了，但DB很近，有一定风险。高风险传球不是每次都能成功——寻找更开阔的目标能提升整体效率。';
-    }
-
-    if (lr.yacYards > 5) {
-      tip += `\n🏃 ${lr.wrName}接球后又推进了${lr.yacYards}码！空间越大=YAC越多，这就是"separation"的价值。`;
-    }
-  } else {
-    // Incomplete
-    title = '📖 传球未完成分析';
-    lines.push(`传向${lr.wrName}的${routeLabel}未能完成接球。`);
-    lines.push(`传球方式: ${passLabel} | 防守: ${coverLabel}`);
-    lines.push(`接球成功率: ${Math.round(lr.catchProb)}% | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
-
-    if (lr.closestDBDist < 2) {
-      lines.push('防守球员几乎贴在接球手身上。');
-      tip = '💡 防守紧贴时接球极难。学会"读防"是QB的核心能力：先看防守站位，找到被defensive gap露出的接球手再传。';
-    } else if (lr.closestDBDist < 5) {
-      lines.push('接球手有一定空间，但竞争激烈。');
-      if (lr.passType === 'lob') {
-        tip = '💡 在竞争区域用高吊球给了DB额外反应时间。试试bullet传球——快速出手让防守来不及干扰。';
+    if (lr.coverageIsMan) {
+      if (cushion !== null && cushion < 5) {
+        tip = `🏈 盯人Press防守（cushion仅${cushion.toFixed(0)}码），DB贴身起步。${deep ? 'Deep route在press下需要WR有爆发力甩开——但DB起步就贴着，INT窗口巨大。' : '短传在press下其实是机会——DB重心前倾，slant/drag可以利用他的惯性跑出空间。'}建议：press下优先slant/drag的quick release，bullet出手。`;
+      } else if (cushion !== null && cushion >= 7) {
+        tip = `🏈 DB给了${cushion.toFixed(0)}码cushion（off-man），说明他在防deep。${deep ? 'Go/streak在大cushion下很难获得分离——DB已经退到位了，你的WR需要跑20码才能甩开，这段时间给了DB充分的反应。' : ''}Off-man下最佳选择：curl/hitch/out——WR在cushion的空档接球，DB还在追赶中。传球要在WR转身瞬间出手（route progress 85%+）。`;
       } else {
-        tip = '💡 接球区域处于竞争状态。可以考虑：(1)等路线跑完再出手 (2)选择更空的其他接球手 (3)用motion来识别人盯人/区域防守。';
+        tip = `🏈 人盯人防守被抄截。关键是读懂DB站位：DB贴近(press)→打slant/drag快出手; DB退远(off)→打curl/hitch吃cushion空间; 只有DB在中间距离(5-6码)且WR速度优势时才考虑deep route。传球选bullet减少滞空时间。`;
       }
     } else {
-      lines.push('接球手有空间但仍未完成接球。');
-      tip = '💡 有时候运气也是比赛的一部分。空间足够但仍未接住，可能是时机或角度问题。保持信心，继续传给空位接球手。';
+      // Zone
+      if (lr.hasDeepSafety && deep) {
+        tip = `🏈 对方有deep safety坐镇深区，你打了${routeLabel}被读死。区域防守的deep safety专门等deep ball——他不跟人，只看QB眼睛。打zone deep需要先用underneath路线（drag/flat）把underneath defender吸走，制造zone gap，而不是直接扔deep。`;
+      } else if (!lr.hasFlatDefender && short) {
+        tip = `🏈 没有flat defender但短传仍被截——可能是zone defender读到了你的倾向。连续打同一区域会被zone defender cheating过来。解决方案：用play-action eye movement，先看一侧再传另一侧（游戏中=分散你的WR选择），或者打zone的天敌：seam/dig——穿过zone之间的缝隙。`;
+      } else {
+        tip = `🏈 ${lr.coverName}下被抄截。Zone防守的弱点是zone之间的缝隙(seam)——dig/seam/curl路线专门攻击这些空间。避免直接往zone defender守的区域扔球。另外zone下lob球危险，优先bullet/touch。`;
+      }
+    }
+    // Better option?
+    if (lr.allWRScores.length > 0 && lr.allWRScores[0].idx !== lr.chosenWR) {
+      const best = lr.allWRScores[0];
+      tip += ` 📊 更优选择: ${best.name}的${routeNames[best.route] || best.route}分离度更高。`;
     }
 
-    // Route-specific tips
-    if (lr.coverageIsMan && (lr.route === 'slant' || lr.route === 'drag')) {
-      tip += '\n⚡ 对盯人防守，slant/drag是最佳选择之一——利用quick release在DB反应前完成传球。';
+  // --- OVERTHROWN ---
+  } else if (lr.overthrown) {
+    title = '🎓 传球偏离复盘';
+    lines.push(`${routeLabel} → ${lr.wrName} | 球飞偏`);
+    lines.push(`传球: ${passLabel} | 出手时机: ${Math.round(lr.throwMomentProgress * 100)}%`);
+    if (lr.throwMomentProgress < 0.6) {
+      tip = '🏈 出手太早！WR还在跑路线中间段，球飞向的是预判位置而不是实际位置。等route progress到70-85%再出手——WR进入break point（转向点）时是最佳出手时机。提前出手只适合flat/hitch这种直线短路线。';
+    } else {
+      tip = '🏈 传球偏离目标。可能原因：(1) Lob球在长距离上精度下降，deep route优先用touch (2) 被冲传干扰影响出手角度 (3) QB arm rating不够支撑这个距离的精准传球。缩短传球距离或升级QB臂力。';
     }
-    if (!lr.coverageIsMan && (lr.route === 'streak' || lr.route === 'post')) {
-      tip += '\n🎯 对区域防守，深区路线需要找到zone之间的缝隙。Curl和dig路线通常能在区域防守的空隙中停下来接球。';
+
+  // --- SUCCESS ---
+  } else if (lr.success) {
+    title = '🎓 成功传球复盘';
+    lines.push(`${routeLabel} → ${lr.wrName} ✓ +${lr.yardsGained}码`);
+    lines.push(`路线: ${lr.routeYards || 0}码 + YAC: ${lr.yacYards || 0}码`);
+    lines.push(`防守: ${lr.coverName} | 传球: ${passLabel}`);
+    lines.push(`成功率: ${Math.round(lr.catchProb)}% | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
+
+    if (lr.coverageIsMan) {
+      if (cushion !== null && cushion < 5 && !deep) {
+        tip = `🏈 对press man（${cushion.toFixed(0)}码cushion）用${routeLabel}是正确读防。Press下DB重心前倾、贴身跟防，${short ? '短路线让他来不及反应就完成接球' : '中距离路线利用了他转身的空档'}。${lr.passType === 'bullet' ? 'Bullet出手快，DB没有反应窗口，完美选择。' : '如果用bullet出手会更安全——减少DB的反应时间。'}`;
+      } else if (cushion !== null && cushion >= 7 && deep) {
+        tip = `🏈 DB给了${cushion.toFixed(0)}码cushion但你deep ball成功了——说明WR速度够快甩开了off-man coverage。但注意：这种deep shot在off-man下并不稳定，DB已经退到位，成功更多靠WR天赋。更高效的攻击off-man的方式是curl/out——吃掉那${cushion.toFixed(0)}码cushion作为guaranteed yards。`;
+      } else if (cushion !== null && cushion >= 7 && !deep) {
+        tip = `🏈 漂亮的读防！DB给了${cushion.toFixed(0)}码off-man cushion，你用${routeLabel}精准吃掉了这个空间。Off-man下打curl/hitch/out是教科书打法——guaranteed catch，因为WR在DB追上来之前就转身接球了。继续这样打。`;
+      } else {
+        tip = `🏈 人盯人下${routeLabel}成功。继续观察DB的cushion：贴近→打quick route; 退远→打underneath吃空间。分散目标避免被adaptive tracking锁定。`;
+      }
+    } else {
+      // Zone success
+      if (deep && !lr.hasDeepSafety) {
+        tip = `🏈 没有deep safety的zone防守被deep ball惩罚——正确的读防。${lr.coverName}的弱点就是深区无人，${routeLabel}直接攻击了这个漏洞。记住这个对手的特征，后续可以继续利用。`;
+      } else if (!deep && lr.hasFlatDefender) {
+        tip = `🏈 有flat defender但短传仍然成功——${routeLabel}找到了zone的缝隙。Zone防守的每个defender只负责一个区域，路线如果恰好停在两个zone之间（seam），就是guaranteed catch。dig和curl最擅长攻击这种空隙。`;
+      } else {
+        tip = `🏈 ${lr.coverName}下成功完成传球。DB距离${lr.closestDBDist.toFixed(1)}码${lr.closestDBDist > 8 ? '，空间很大——zone defense被你读穿了' : '，空间不大但执行到位'}。Zone的关键：找zone之间的缝隙，用眼神和选择分散defender的注意力。`;
+      }
+    }
+    if (lr.yacYards > 5) {
+      tip += ` 🏃 +${lr.yacYards}码YAC！DB距离${lr.closestDBDist.toFixed(0)}码→接球后有空间推进。YAC是分离度的直接体现，空间越大=更多额外码数。`;
+    }
+
+  // --- INCOMPLETE ---
+  } else {
+    title = '🎓 未完成传球复盘';
+    lines.push(`${routeLabel} → ${lr.wrName} ✗ INCOMPLETE`);
+    lines.push(`防守: ${lr.coverName} | 传球: ${passLabel}`);
+    lines.push(`成功率: ${Math.round(lr.catchProb)}% | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
+
+    if (lr.coverageIsMan) {
+      if (cushion !== null && cushion < 5) {
+        // Press man
+        if (deep) {
+          tip = `🏈 Press man（${cushion.toFixed(0)}码cushion）下打${routeLabel}——DB贴身起步，deep route需要跑15+码才能制造分离，这给了DB足够时间恢复。Press下正确打法：quick release route（slant/flat/drag），利用DB重心前倾的瞬间完成1-step drop + bullet出手。`;
+        } else {
+          tip = `🏈 Press下${routeLabel}失败。虽然short route vs press是正解，但接球率仅${Math.round(lr.catchProb)}%。检查：(1) 传球时机——press下要在WR做break的瞬间出手（anticipation throw）(2) 传球类型——${lr.passType === 'lob' ? 'lob球给了press DB反应时间，换bullet' : 'bullet是正确选择，可能需要提升WR的CAT值'}。`;
+        }
+      } else if (cushion !== null && cushion >= 7) {
+        // Off man
+        if (deep) {
+          tip = `🏈 DB给了${cushion.toFixed(0)}码cushion（off-man），你打了${routeLabel}。Off-man的DB已经在retreat——他在防deep。${routeLabel}需要WR速度碾压才能在off-man下获得分离。更高效的策略：curl/hitch/out吃那${cushion.toFixed(0)}码cushion，guaranteed 5-7码。deep shot留给press coverage或没有safety的zone。`;
+        } else {
+          tip = `🏈 Off-man（${cushion.toFixed(0)}码cushion）下${routeLabel}失败——这应该是高概率接球。可能原因：(1) 出手时机${lr.throwMomentProgress < 0.7 ? '太早，WR还没到break point' : '可以更早，在WR刚转身时anticipation throw'} (2) ${lr.passType === 'lob' ? 'Lob球滞空太久，换bullet/touch' : '尝试提升WR的CAT能力'}。Off-man下underneath route应该是bread and butter。`;
+        }
+      } else {
+        tip = `🏈 人盯人防守下传球未完成。DB距离${lr.closestDBDist.toFixed(1)}码${lr.closestDBDist < 3 ? '——防守贴身，这是forced throw。读防时如果看到DB贴得近，果断换目标。' : '——有一定空间但未接住，执行或时机问题。'}关键原则：永远传给最空的人，不要对着tight coverage硬扔。`;
+      }
+    } else {
+      // Zone incomplete
+      if (deep && lr.hasDeepSafety) {
+        tip = `🏈 ${lr.coverName}有deep safety，你打了${routeLabel}——deep safety就是专门等这种球的。他不跟人，只读QB的眼睛和出手动作。打有deep safety的zone：(1) 先underneath吸引safety前移 (2) dig/seam穿zone缝隙 (3) 只有safety被吸引走后才有deep shot机会。`;
+      } else if (!deep) {
+        tip = `🏈 Zone下短传失败。${lr.coverName}的underneath coverage可能覆盖了${routeLabel}的落点。Zone防守下：(1) curl/dig停在两个zone之间的缝隙里 (2) 避免把球传向zone defender正面 (3) 移动pocket看到不同角度的zone空隙。成功率${Math.round(lr.catchProb)}%说明${lr.catchProb > 60 ? '运气成分较大，这个选择本身没问题' : '分离度不够，需要找更好的匹配'}。`;
+      } else {
+        tip = `🏈 Zone下deep传球未完成。没有deep safety但仍失败——可能是出手时机或准度问题。Deep route在zone下是机会球，但需要：(1) route progress 80%+再出手 (2) 用touch或lob给球足够弧度 (3) 注意underneath defender的视线，如果他在看你，会跳起来干扰传球路径。`;
+      }
+    }
+    // Better option
+    if (lr.allWRScores.length > 0 && lr.allWRScores[0].idx !== lr.chosenWR) {
+      const best = lr.allWRScores[0];
+      tip += ` 📊 本档最优选择: ${best.name}的${routeNames[best.route] || best.route}（分离度最高）。`;
     }
   }
 
   return { title, lines, tip };
+}
+
+let teachingMomentData = null;
+
+function drawTeachingMoment() {
+  ctx.fillStyle = 'rgba(10, 8, 6, 0.95)';
+  ctx.fillRect(0, 0, W, H);
+  if (!teachingMomentData) return;
+
+  // iPhone-safe margins
+  const margin = Math.max(20, SAFE.left + 12);
+  const topMargin = SAFE.top + 15;
+  const bottomMargin = SAFE.bottom + 15;
+  const cardX = margin, cardW = W - margin * 2;
+  const fontSize = Math.max(12, Math.min(14, W * 0.035));
+  const titleSize = Math.max(16, Math.min(20, W * 0.05));
+  const tipFontSize = Math.max(11, Math.min(13, W * 0.033));
+
+  // Measure content
+  const lineH = fontSize + 7, tipLineH = tipFontSize + 6, wrapW = cardW - 24;
+  let totalH = titleSize + 35;
+  ctx.font = `${fontSize}px "Courier New"`;
+  for (const line of teachingMomentData.lines) {
+    let cl = '';
+    for (const ch of line) { if (ctx.measureText(cl + ch).width > wrapW) { totalH += lineH; cl = ch; } else cl += ch; }
+    totalH += lineH + 3;
+  }
+  totalH += 12;
+  let tipBoxH = 16;
+  if (teachingMomentData.tip) {
+    ctx.font = `${tipFontSize}px "Courier New"`;
+    let cl = '';
+    for (const ch of teachingMomentData.tip) { if (ctx.measureText(cl + ch).width > wrapW) { tipBoxH += tipLineH; cl = ch; } else cl += ch; }
+    tipBoxH += tipLineH + 10;
+  }
+  totalH += tipBoxH + 20 + 44;
+
+  const usableH = H - topMargin - bottomMargin;
+  let y = Math.max(topMargin, topMargin + Math.floor((usableH - totalH) / 2));
+
+  // Title
+  ctx.textAlign = 'center';
+  ctx.fillStyle = COL.uiGold; ctx.font = `bold ${titleSize}px "Courier New"`;
+  ctx.fillText(teachingMomentData.title, W / 2, y); y += titleSize + 12;
+
+  // Divider
+  ctx.strokeStyle = COL.uiGold; ctx.lineWidth = 1; ctx.globalAlpha = 0.4;
+  ctx.beginPath(); ctx.moveTo(cardX + 10, y); ctx.lineTo(cardX + cardW - 10, y); ctx.stroke();
+  ctx.globalAlpha = 1; y += 12;
+
+  // Info card
+  const infoStartY = y - 6;
+  ctx.font = `${fontSize}px "Courier New"`;
+  let infoH = 12;
+  for (const line of teachingMomentData.lines) {
+    let cl = '';
+    for (const ch of line) { if (ctx.measureText(cl + ch).width > wrapW) { infoH += lineH; cl = ch; } else cl += ch; }
+    infoH += lineH + 3;
+  }
+  drawPixelRect(ctx, cardX, infoStartY, cardW, infoH, 'rgba(30,25,18,0.7)', 'rgba(200,168,92,0.3)');
+  y += 4;
+
+  // Info lines
+  ctx.textAlign = 'left';
+  ctx.fillStyle = COL.parchment; ctx.font = `${fontSize}px "Courier New"`;
+  for (const line of teachingMomentData.lines) {
+    let currentLine = '';
+    for (const ch of line) {
+      if (ctx.measureText(currentLine + ch).width > wrapW) { ctx.fillText(currentLine, cardX + 12, y); currentLine = ch; y += lineH; }
+      else currentLine += ch;
+    }
+    ctx.fillText(currentLine, cardX + 12, y); y += lineH + 3;
+  }
+  y += 12;
+
+  // Tip box
+  if (teachingMomentData.tip) {
+    drawPixelRect(ctx, cardX, y, cardW, tipBoxH, 'rgba(25,50,20,0.8)', COL.uiGreen);
+    y += 14;
+    ctx.fillStyle = '#99dd77'; ctx.font = `${tipFontSize}px "Courier New"`;
+    let currentLine = '';
+    for (const ch of teachingMomentData.tip) {
+      if (ctx.measureText(currentLine + ch).width > wrapW) { ctx.fillText(currentLine, cardX + 12, y); currentLine = ch; y += tipLineH; }
+      else currentLine += ch;
+    }
+    ctx.fillText(currentLine, cardX + 12, y); y += tipLineH + 12;
+  }
+
+  // Continue button
+  y = Math.max(y + 12, H - bottomMargin - 50);
+  const btnW = Math.min(180, W * 0.5), btnH = 44;
+  const btnX = W / 2 - btnW / 2, btnY = Math.min(y, H - bottomMargin - 50);
+  drawPixelRect(ctx, btnX, btnY, btnW, btnH, '#2a4a1a', COL.uiGreen);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#ccffaa'; ctx.font = `bold ${Math.max(14, fontSize)}px "Courier New"`;
+  ctx.fillText('✅ 明白了', W / 2, btnY + 28);
+  genericButtons = [{ x: btnX, y: btnY, w: btnW, h: btnH, action: 'teaching_ok' }];
+}
+
+// ============================================================
+// UPGRADE, EVENT, SHOP, REST, HALFTIME, TRAINING SCREENS
+// ============================================================
+let upgradeButtons = [];
+function drawUpgradeScreen() {
+  ctx.fillStyle = '#12100e'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = COL.uiGold; ctx.font = 'bold 22px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillText('🏈 TOUCHDOWN! 🏈', W / 2, 35);
+  ctx.fillStyle = COL.parchment; ctx.font = '13px "Courier New"'; ctx.fillText('选择升级', W / 2, 55);
+  upgradeButtons = []; const cW2 = W - 50, cH2 = 80;
+  for (let i = 0; i < upgradeOptions.length; i++) {
+    const opt = upgradeOptions[i], cy = 72 + i * (cH2 + 10), cx = 25;
+    const btn = { x: cx, y: cy, w: cW2, h: cH2, index: i }; upgradeButtons.push(btn);
+    const ih = isInsideRect(mouseX, mouseY, cx, cy, cW2, cH2);
+    const bc = opt.type === 'qb' ? COL.uiGold : opt.type === 'wr' ? COL.uiBlue : opt.type === 'relic' ? COL.uiPurple : COL.uiGreen;
+    drawCardFrame(ctx, cx, cy, cW2, cH2, ih);
+    ctx.fillStyle = bc; ctx.fillRect(cx + 4, cy + 4, 3, cH2 - 8);
+    ctx.font = '20px serif'; ctx.textAlign = 'right'; ctx.fillText(opt.icon, cx + cW2 - 12, cy + 42);
+    ctx.fillStyle = COL.parchment; ctx.font = 'bold 15px "Courier New"'; ctx.textAlign = 'left';
+    ctx.fillText(opt.name, cx + 14, cy + 35);
+    ctx.fillStyle = '#aaa'; ctx.font = '12px "Courier New"'; ctx.fillText(opt.desc, cx + 14, cy + 55);
+  }
+  drawParticles();
 }
 
 let teachingMomentData = null;
