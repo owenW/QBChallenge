@@ -3028,6 +3028,7 @@ function handlePlayResult() {
       throwMomentProgress,
       bestWRIdx: currentPlay ? currentPlay.bestWR : -1,
       rushFast: currentPlay ? currentPlay.rushFast : false,
+      offenseName: currentPlay ? currentPlay.offense.name : '',
     };
   }
 
@@ -4330,146 +4331,156 @@ function drawPlayResult() {
 
 function generateTeachingMoment(lr) {
   if (!lr) return { title: '', lines: [], tip: '' };
-  const routeNames = {
-    post: 'POST', slant: 'SLANT', flat: 'FLAT', streak: 'STREAK/GO',
-    drag: 'DRAG', out: 'OUT', curl: 'CURL', corner: 'CORNER',
-    wheel: 'WHEEL', hitch: 'HITCH', dig: 'DIG', seam: 'SEAM',
-  };
-  const passNames = { bullet: 'Bullet', lob: 'Lob', touch: 'Touch' };
-  const routeLabel = routeNames[lr.route] || lr.route;
-  const passLabel = passNames[lr.passType] || lr.passType || 'Touch';
+  const RN = { post:'POST', slant:'SLANT', flat:'FLAT', streak:'GO/FLY', drag:'DRAG', out:'OUT', curl:'CURL', corner:'CORNER', wheel:'WHEEL', hitch:'HITCH', dig:'DIG', seam:'SEAM' };
+  const PN = { bullet:'Bullet', lob:'Lob', touch:'Touch' };
+  const rl = RN[lr.route] || lr.route;
+  const pl = PN[lr.passType] || lr.passType || 'Touch';
   const deep = isDeepRoute(lr.route);
   const short = isShortRoute(lr.route);
-  const cushion = lr.manCoverDB ? lr.manCoverDB.dist : null;
+
+  // ── Route vs Coverage matchup knowledge base ──
+  // Which routes beat which coverages, and WHY (scheme-level)
+  const routeVsCover = {
+    'Cover 1': {
+      beaters: ['slant','drag','flat','crossing'],
+      concept: 'Cover 1 = 3个DB盯人 + 1个Free Safety居中读QB。FS是这个防守的核心——他根据QB的眼神判断传球方向。',
+      weakness: '弱点在underneath：FS站深区，underneath只靠man coverage。快速横穿路线（drag/slant）能在DB还没跟上时完成接球。Bunch/Stack阵型能用pick（自然挡路）干扰man coverage。',
+      deepThreat: 'Deep ball有FS保护——除非你用underneath先把FS骗下来。Post route直冲FS面前是最危险的选择。',
+      bestPlay: '对Cover 1最佳concept: Mesh/Drive（交叉路线制造pick）, Quick Slants（快出手越过man）, Flood（三级高低拉开FS）'
+    },
+    'Cover 2': {
+      beaters: ['seam','post','streak','corner'],
+      concept: 'Cover 2 = 2个Safety分守两侧深区 + 2个Flat Defender守短区。中间深区（seam area）是最大漏洞。',
+      weakness: '两个safety之间有一条12-15码宽的中路缝隙。Seam/Post路线直接攻击这个缝隙。另外Corner route可以把safety拉向边线，打开中路。',
+      deepThreat: 'Flat defender守underneath，deep由safety负责。如果先用flat route把flat defender吸住，deep out/corner就打开了——这就是Smash concept。',
+      bestPlay: '对Cover 2最佳concept: Smash（hitch+corner高低组合）, 4 Verticals（seam route攻击中路缝隙）, Post route打两个safety之间'
+    },
+    'Cover 3': {
+      beaters: ['curl','hitch','out','flat','dig'],
+      concept: 'Cover 3 = 3个DB守深区三等分 + 1个Flat Defender守underneath。深区三人覆盖很强，underneath相对薄弱。',
+      weakness: 'Flat defender只有一个——他负责的短区面积很大。Curl/Flat组合（Curl-Flat concept）让他只能选一个。Dig route穿过underneath进入两个deep zone之间也很有效。',
+      deepThreat: '三人深区覆盖让单纯的deep ball很难成功。但如果用underneath先吸引flat defender，corner/post的结合可以攻击deep zone之间的缝隙。',
+      bestPlay: '对Cover 3最佳concept: Curl-Flat（让flat defender二选一）, Flood（三级路线淹没两人区域）, Levels（高低分层攻击underneath）'
+    },
+    'Cover 4': {
+      beaters: ['drag','slant','flat','hitch','dig'],
+      concept: 'Cover 4 (Quarters) = 4个DB各守1/4深区。underneath完全放空——这是纯防deep的战术。',
+      weakness: '没有underneath defender！短传路线（drag/flat/hitch）是免费码数。4个人全守deep意味着underneath是你的后花园。',
+      deepThreat: 'Deep ball在Cover 4下极难成功——4个人守deep意味着每条deep路线都有人跟。不要尝试，吃underneath。',
+      bestPlay: '对Cover 4最佳concept: Quick Drag（underneath无人）, Spacing（横向拉开短区）, Flat/Screen（利用underneath真空）, 耐心吃5-8码推进'
+    },
+    'Man Blitz': {
+      beaters: ['slant','flat','drag','hitch'],
+      concept: 'Man Blitz = 全员盯人 + 快速冲传。口袋时间极短（1.5-2秒），但所有DB都跟人走，背对QB。',
+      weakness: 'DB跟人时背对QB——quick route让DB来不及反应。Slant/Drag利用DB转身瞬间完成接球。关键是出手速度：pre-snap就要锁定hot read。',
+      deepThreat: 'Deep route需要3+秒口袋时间，blitz下根本没有。除非对方blitz失误留出时间，否则不要考虑deep。',
+      bestPlay: '对Man Blitz最佳concept: Quick Slants（1-step drop + bullet）, Hot Route（pre-snap锁定flat/hitch）, Spacing（拉开man defender间距）'
+    }
+  };
+
+  const coverInfo = routeVsCover[lr.coverName] || null;
+  const isRouteBeater = coverInfo ? coverInfo.beaters.includes(lr.route) : false;
+  // Get all routes in the concept (from allWRScores)
+  const conceptRoutes = lr.allWRScores.map(w => w.route);
+  const hasBeaterInConcept = coverInfo ? conceptRoutes.some(r => coverInfo.beaters.includes(r)) : false;
 
   let title = '', lines = [], tip = '';
 
-  // --- SACK ---
+  // ── SACK ──
   if (lr.isSack) {
-    title = '🎓 擒杀复盘';
-    lines.push(`QB被擒杀 -${lr.sackYards || 5}码`);
-    lines.push(`防守: ${lr.coverName} (${lr.coverType})`);
-    if (lr.rushFast) lines.push('⚡ 对方启用快速冲传');
-    if (lr.scrambleResult === 'stand_tall') {
-      tip = '🏈 你硬站口袋被吃了sack。面对快速冲传，两个选择：(1) 预判冲传方向做反向闪避 (2) 直接选hot route（flat/hitch），在冲传到之前bullet出手。口袋时间只有2-3秒，deep route在强冲传下是陷阱。';
+    title = '🎓 SACK 复盘';
+    lines.push(`损失${lr.sackYards || 5}码 | ${lr.coverName}`);
+    if (lr.rushFast) lines.push('⚡ 快速冲传');
+    if (coverInfo) {
+      tip = `🏈 ${lr.coverName}下被sack。${lr.coverName === 'Man Blitz' ? 'Blitz的本质是用冲传人数换口袋时间——你必须在1.5秒内出手。Pre-snap就要识别blitz（DB贴近LOS、LB前移），锁定hot read（通常是离QB最近的flat/slant）。' : '被sack说明持球太久。读防顺序：第一读→第二读→check down，不要超过3秒。'}`;
+      tip += ` ${coverInfo.bestPlay}`;
     } else {
-      tip = '🏈 冲传突破了保护。快速冲传下要改变打法：选flat/slant/hitch这种1-2秒就能完成的路线，配合bullet传球。deep route需要3+秒口袋时间，面对blitz打deep就是送sack。';
+      tip = '🏈 持球时间太长。建议：pre-snap锁定hot read（快出手选项），如果前两个read没有空，立刻check down到flat/hitch。';
     }
 
-  // --- INT ---
+  // ── INT ──
   } else if (lr.isINT) {
-    title = '🎓 抄截复盘';
-    lines.push(`${routeLabel} → ${lr.wrName} | 被拦截`);
-    lines.push(`防守: ${lr.coverName} | 传球: ${passLabel}`);
-    if (cushion !== null) lines.push(`盯防DB赛前距离: ${cushion.toFixed(1)}码`);
-    lines.push(`接球时DB距离: ${lr.closestDBDist.toFixed(1)}码`);
-
-    if (lr.coverageIsMan) {
-      if (cushion !== null && cushion < 5) {
-        tip = `🏈 盯人Press防守（cushion仅${cushion.toFixed(0)}码），DB贴身起步。${deep ? 'Deep route在press下需要WR有爆发力甩开——但DB起步就贴着，INT窗口巨大。' : '短传在press下其实是机会——DB重心前倾，slant/drag可以利用他的惯性跑出空间。'}建议：press下优先slant/drag的quick release，bullet出手。`;
-      } else if (cushion !== null && cushion >= 7) {
-        tip = `🏈 DB给了${cushion.toFixed(0)}码cushion（off-man），说明他在防deep。${deep ? 'Go/streak在大cushion下很难获得分离——DB已经退到位了，你的WR需要跑20码才能甩开，这段时间给了DB充分的反应。' : ''}Off-man下最佳选择：curl/hitch/out——WR在cushion的空档接球，DB还在追赶中。传球要在WR转身瞬间出手（route progress 85%+）。`;
+    title = '🎓 INT 复盘';
+    lines.push(`${rl} → ${lr.wrName} | ${lr.coverName}`);
+    lines.push(`传球: ${pl} | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
+    if (coverInfo) {
+      if (isRouteBeater) {
+        tip = `🏈 ${rl}理论上是对${lr.coverName}的正确选择，但被抄截。路线选对了，问题在执行：`;
+        if (lr.throwMomentProgress < 0.65) tip += `出手太早（路线只完成${Math.round(lr.throwMomentProgress*100)}%），WR还没到break point。`;
+        else if (lr.passType === 'lob') tip += '传球类型错误——contested throw不要用Lob，用Bullet减少DB反应窗口。';
+        else tip += `DB距离${lr.closestDBDist.toFixed(1)}码，可能WR没有跑出足够分离。检查WR的SPD/RTE属性，或者选信任值更高的WR。`;
       } else {
-        tip = `🏈 人盯人防守被抄截。关键是读懂DB站位：DB贴近(press)→打slant/drag快出手; DB退远(off)→打curl/hitch吃cushion空间; 只有DB在中间距离(5-6码)且WR速度优势时才考虑deep route。传球选bullet减少滞空时间。`;
+        tip = `🏈 ${rl}不是攻击${lr.coverName}的最佳路线。${coverInfo.concept} ${deep ? coverInfo.deepThreat : coverInfo.weakness}`;
+        if (hasBeaterInConcept) {
+          const better = lr.allWRScores.find(w => coverInfo.beaters.includes(w.route));
+          if (better) tip += ` 本档更优选择: ${better.name}的${RN[better.route]||better.route}——这才是${lr.coverName}的克制路线。`;
+        } else {
+          tip += ` ${coverInfo.bestPlay}`;
+        }
       }
     } else {
-      // Zone
-      if (lr.hasDeepSafety && deep) {
-        tip = `🏈 对方有deep safety坐镇深区，你打了${routeLabel}被读死。区域防守的deep safety专门等deep ball——他不跟人，只看QB眼睛。打zone deep需要先用underneath路线（drag/flat）把underneath defender吸走，制造zone gap，而不是直接扔deep。`;
-      } else if (!lr.hasFlatDefender && short) {
-        tip = `🏈 没有flat defender但短传仍被截——可能是zone defender读到了你的倾向。连续打同一区域会被zone defender cheating过来。解决方案：用play-action eye movement，先看一侧再传另一侧（游戏中=分散你的WR选择），或者打zone的天敌：seam/dig——穿过zone之间的缝隙。`;
-      } else {
-        tip = `🏈 ${lr.coverName}下被抄截。Zone防守的弱点是zone之间的缝隙(seam)——dig/seam/curl路线专门攻击这些空间。避免直接往zone defender守的区域扔球。另外zone下lob球危险，优先bullet/touch。`;
-      }
-    }
-    // Better option?
-    if (lr.allWRScores.length > 0 && lr.allWRScores[0].idx !== lr.chosenWR) {
-      const best = lr.allWRScores[0];
-      tip += ` 📊 更优选择: ${best.name}的${routeNames[best.route] || best.route}分离度更高。`;
+      tip = `🏈 被抄截。DB距离仅${lr.closestDBDist.toFixed(1)}码——传向tight coverage是高风险决策。读防原则：先看有没有open receiver，没有就check down或扔掉。`;
     }
 
-  // --- OVERTHROWN ---
+  // ── OVERTHROWN ──
   } else if (lr.overthrown) {
-    title = '🎓 传球偏离复盘';
-    lines.push(`${routeLabel} → ${lr.wrName} | 球飞偏`);
-    lines.push(`传球: ${passLabel} | 出手时机: ${Math.round(lr.throwMomentProgress * 100)}%`);
+    title = '🎓 传球偏离';
+    lines.push(`${rl} → ${lr.wrName} | 球飞偏`);
+    lines.push(`出手时机: 路线完成${Math.round(lr.throwMomentProgress * 100)}%`);
     if (lr.throwMomentProgress < 0.6) {
-      tip = '🏈 出手太早！WR还在跑路线中间段，球飞向的是预判位置而不是实际位置。等route progress到70-85%再出手——WR进入break point（转向点）时是最佳出手时机。提前出手只适合flat/hitch这种直线短路线。';
+      tip = `🏈 出手太早。${rl}的break point在路线70-85%位置——WR在这个点变向/转身，传球要在break point前1步出手（anticipation throw），球到的时候WR刚好转过来。你在${Math.round(lr.throwMomentProgress*100)}%就出手，WR还在直线跑，球和人走向不同。`;
     } else {
-      tip = '🏈 传球偏离目标。可能原因：(1) Lob球在长距离上精度下降，deep route优先用touch (2) 被冲传干扰影响出手角度 (3) QB arm rating不够支撑这个距离的精准传球。缩短传球距离或升级QB臂力。';
+      tip = `🏈 出手时机OK但球偏了。${deep ? 'Deep throw对ARM要求高——距离越远精度越差。如果QB臂力不够，用touch pass替代lob，或者选中距离路线（dig/curl）减少传球距离。' : '短传偏离通常是冲传干扰导致。如果面对强冲传，提前锁定目标，不要在pocket被压缩时才出手。'}`;
     }
 
-  // --- SUCCESS ---
+  // ── SUCCESS ──
   } else if (lr.success) {
-    title = '🎓 成功传球复盘';
-    lines.push(`${routeLabel} → ${lr.wrName} ✓ +${lr.yardsGained}码`);
-    lines.push(`路线: ${lr.routeYards || 0}码 + YAC: ${lr.yacYards || 0}码`);
-    lines.push(`防守: ${lr.coverName} | 传球: ${passLabel}`);
-    lines.push(`成功率: ${Math.round(lr.catchProb)}% | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
-
-    if (lr.coverageIsMan) {
-      if (cushion !== null && cushion < 5 && !deep) {
-        tip = `🏈 对press man（${cushion.toFixed(0)}码cushion）用${routeLabel}是正确读防。Press下DB重心前倾、贴身跟防，${short ? '短路线让他来不及反应就完成接球' : '中距离路线利用了他转身的空档'}。${lr.passType === 'bullet' ? 'Bullet出手快，DB没有反应窗口，完美选择。' : '如果用bullet出手会更安全——减少DB的反应时间。'}`;
-      } else if (cushion !== null && cushion >= 7 && deep) {
-        tip = `🏈 DB给了${cushion.toFixed(0)}码cushion但你deep ball成功了——说明WR速度够快甩开了off-man coverage。但注意：这种deep shot在off-man下并不稳定，DB已经退到位，成功更多靠WR天赋。更高效的攻击off-man的方式是curl/out——吃掉那${cushion.toFixed(0)}码cushion作为guaranteed yards。`;
-      } else if (cushion !== null && cushion >= 7 && !deep) {
-        tip = `🏈 漂亮的读防！DB给了${cushion.toFixed(0)}码off-man cushion，你用${routeLabel}精准吃掉了这个空间。Off-man下打curl/hitch/out是教科书打法——guaranteed catch，因为WR在DB追上来之前就转身接球了。继续这样打。`;
+    title = '🎓 ✓ 传球成功';
+    lines.push(`${rl} → ${lr.wrName} +${lr.yardsGained}码`);
+    lines.push(`${lr.coverName} | ${pl} | 成功率${Math.round(lr.catchProb)}%`);
+    if (coverInfo) {
+      if (isRouteBeater) {
+        tip = `🏈 教科书般的读防。${lr.coverName}的落位决定了${rl}能打出空间：${coverInfo.weakness}`;
+        if (lr.yacYards > 3) tip += ` 接球后+${lr.yacYards}码YAC——open catch=更多跑动空间，这就是选对路线的价值。`;
       } else {
-        tip = `🏈 人盯人下${routeLabel}成功。继续观察DB的cushion：贴近→打quick route; 退远→打underneath吃空间。分散目标避免被adaptive tracking锁定。`;
+        tip = `🏈 ${rl}不是对${lr.coverName}的传统克制路线，但成功了——${lr.closestDBDist > 8 ? '防守执行出了问题，你利用了他们的漏洞' : '强行完成了一次困难接球，不是每次都能成功'}。`;
+        tip += ` 了解一下更稳的选择：${coverInfo.weakness} ${coverInfo.bestPlay}`;
       }
     } else {
-      // Zone success
-      if (deep && !lr.hasDeepSafety) {
-        tip = `🏈 没有deep safety的zone防守被deep ball惩罚——正确的读防。${lr.coverName}的弱点就是深区无人，${routeLabel}直接攻击了这个漏洞。记住这个对手的特征，后续可以继续利用。`;
-      } else if (!deep && lr.hasFlatDefender) {
-        tip = `🏈 有flat defender但短传仍然成功——${routeLabel}找到了zone的缝隙。Zone防守的每个defender只负责一个区域，路线如果恰好停在两个zone之间（seam），就是guaranteed catch。dig和curl最擅长攻击这种空隙。`;
-      } else {
-        tip = `🏈 ${lr.coverName}下成功完成传球。DB距离${lr.closestDBDist.toFixed(1)}码${lr.closestDBDist > 8 ? '，空间很大——zone defense被你读穿了' : '，空间不大但执行到位'}。Zone的关键：找zone之间的缝隙，用眼神和选择分散defender的注意力。`;
-      }
-    }
-    if (lr.yacYards > 5) {
-      tip += ` 🏃 +${lr.yacYards}码YAC！DB距离${lr.closestDBDist.toFixed(0)}码→接球后有空间推进。YAC是分离度的直接体现，空间越大=更多额外码数。`;
+      tip = `🏈 传球成功+${lr.yardsGained}码。DB距离${lr.closestDBDist.toFixed(1)}码${lr.closestDBDist > 8 ? '——完全open，读防正确' : '——空间不大，执行优秀'}。`;
     }
 
-  // --- INCOMPLETE ---
+  // ── INCOMPLETE ──
   } else {
-    title = '🎓 未完成传球复盘';
-    lines.push(`${routeLabel} → ${lr.wrName} ✗ INCOMPLETE`);
-    lines.push(`防守: ${lr.coverName} | 传球: ${passLabel}`);
-    lines.push(`成功率: ${Math.round(lr.catchProb)}% | DB距离: ${lr.closestDBDist.toFixed(1)}码`);
-
-    if (lr.coverageIsMan) {
-      if (cushion !== null && cushion < 5) {
-        // Press man
-        if (deep) {
-          tip = `🏈 Press man（${cushion.toFixed(0)}码cushion）下打${routeLabel}——DB贴身起步，deep route需要跑15+码才能制造分离，这给了DB足够时间恢复。Press下正确打法：quick release route（slant/flat/drag），利用DB重心前倾的瞬间完成1-step drop + bullet出手。`;
-        } else {
-          tip = `🏈 Press下${routeLabel}失败。虽然short route vs press是正解，但接球率仅${Math.round(lr.catchProb)}%。检查：(1) 传球时机——press下要在WR做break的瞬间出手（anticipation throw）(2) 传球类型——${lr.passType === 'lob' ? 'lob球给了press DB反应时间，换bullet' : 'bullet是正确选择，可能需要提升WR的CAT值'}。`;
-        }
-      } else if (cushion !== null && cushion >= 7) {
-        // Off man
-        if (deep) {
-          tip = `🏈 DB给了${cushion.toFixed(0)}码cushion（off-man），你打了${routeLabel}。Off-man的DB已经在retreat——他在防deep。${routeLabel}需要WR速度碾压才能在off-man下获得分离。更高效的策略：curl/hitch/out吃那${cushion.toFixed(0)}码cushion，guaranteed 5-7码。deep shot留给press coverage或没有safety的zone。`;
-        } else {
-          tip = `🏈 Off-man（${cushion.toFixed(0)}码cushion）下${routeLabel}失败——这应该是高概率接球。可能原因：(1) 出手时机${lr.throwMomentProgress < 0.7 ? '太早，WR还没到break point' : '可以更早，在WR刚转身时anticipation throw'} (2) ${lr.passType === 'lob' ? 'Lob球滞空太久，换bullet/touch' : '尝试提升WR的CAT能力'}。Off-man下underneath route应该是bread and butter。`;
-        }
+    title = '🎓 INCOMPLETE';
+    lines.push(`${rl} → ${lr.wrName} | ${lr.coverName}`);
+    lines.push(`${pl} | 成功率${Math.round(lr.catchProb)}% | DB距离${lr.closestDBDist.toFixed(1)}码`);
+    if (coverInfo) {
+      if (isRouteBeater) {
+        tip = `🏈 路线选择正确（${rl}克制${lr.coverName}），但未完成。问题在于执行而非读防：`;
+        if (lr.throwMomentProgress < 0.65) tip += `出手太早（${Math.round(lr.throwMomentProgress*100)}%）——等到break point再出手。`;
+        else if (lr.closestDBDist < 3) tip += `DB跟得很紧——可能WR的SPD/RTE不够在man coverage下甩开，选CAT更高的WR或改用bullet加快出手。`;
+        else if (lr.passType === 'lob' && !deep) tip += '短传用了Lob——滞空时间让DB有机会赶到。换Bullet。';
+        else tip += `接球率${Math.round(lr.catchProb)}%——运气成分，路线和读防没问题，继续这样打。`;
       } else {
-        tip = `🏈 人盯人防守下传球未完成。DB距离${lr.closestDBDist.toFixed(1)}码${lr.closestDBDist < 3 ? '——防守贴身，这是forced throw。读防时如果看到DB贴得近，果断换目标。' : '——有一定空间但未接住，执行或时机问题。'}关键原则：永远传给最空的人，不要对着tight coverage硬扔。`;
+        tip = `🏈 ${rl}在${lr.coverName}下不是最优选择。${coverInfo.concept}`;
+        if (deep && (lr.coverName === 'Cover 2' && lr.route !== 'seam' && lr.route !== 'post')) {
+          tip += ` Cover 2的deep zone由safety覆盖。想打deep？Seam/Post攻击两个safety之间的缝隙才是正解。`;
+        } else if (deep && lr.coverName === 'Cover 4') {
+          tip += ` Cover 4有4人守deep——这个防守就是不让你打deep。吃underneath短码数才是正解。`;
+        } else if (short && lr.coverName === 'Cover 1' && lr.closestDBDist < 4) {
+          tip += ` Cover 1的man defender贴身跟防。用Bunch/Mesh制造pick（自然挡路），或者找WR match-up优势。`;
+        } else {
+          tip += ` ${coverInfo.weakness}`;
+        }
+        if (hasBeaterInConcept) {
+          const better = lr.allWRScores.find(w => coverInfo.beaters.includes(w.route));
+          if (better) tip += ` 📊 ${better.name}的${RN[better.route]||better.route}是对${lr.coverName}的克制路线。`;
+        }
+        tip += ` ${coverInfo.bestPlay}`;
       }
     } else {
-      // Zone incomplete
-      if (deep && lr.hasDeepSafety) {
-        tip = `🏈 ${lr.coverName}有deep safety，你打了${routeLabel}——deep safety就是专门等这种球的。他不跟人，只读QB的眼睛和出手动作。打有deep safety的zone：(1) 先underneath吸引safety前移 (2) dig/seam穿zone缝隙 (3) 只有safety被吸引走后才有deep shot机会。`;
-      } else if (!deep) {
-        tip = `🏈 Zone下短传失败。${lr.coverName}的underneath coverage可能覆盖了${routeLabel}的落点。Zone防守下：(1) curl/dig停在两个zone之间的缝隙里 (2) 避免把球传向zone defender正面 (3) 移动pocket看到不同角度的zone空隙。成功率${Math.round(lr.catchProb)}%说明${lr.catchProb > 60 ? '运气成分较大，这个选择本身没问题' : '分离度不够，需要找更好的匹配'}。`;
-      } else {
-        tip = `🏈 Zone下deep传球未完成。没有deep safety但仍失败——可能是出手时机或准度问题。Deep route在zone下是机会球，但需要：(1) route progress 80%+再出手 (2) 用touch或lob给球足够弧度 (3) 注意underneath defender的视线，如果他在看你，会跳起来干扰传球路径。`;
-      }
-    }
-    // Better option
-    if (lr.allWRScores.length > 0 && lr.allWRScores[0].idx !== lr.chosenWR) {
-      const best = lr.allWRScores[0];
-      tip += ` 📊 本档最优选择: ${best.name}的${routeNames[best.route] || best.route}（分离度最高）。`;
+      tip = `🏈 传球未完成。成功率${Math.round(lr.catchProb)}%${lr.catchProb > 60 ? '——选择没问题，执行或运气' : '——分离度不够，需要找更好的route-coverage匹配'}。`;
     }
   }
 
