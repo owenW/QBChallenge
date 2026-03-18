@@ -261,6 +261,176 @@ function drawPlayDiagram(canvas, formation) {
   });
 }
 
+// ── AI Analysis: concept vs coverage reasoning ──
+function analyzeMatchup(coverName, formation) {
+  const routes = formation.routes;
+  const name = formation.name;
+  const deepRoutes = routes.filter(r => ROUTE_TYPE[r] === 'deep');
+  const shortRoutes = routes.filter(r => ROUTE_TYPE[r] === 'short');
+  const midRoutes = routes.filter(r => ROUTE_TYPE[r] === 'mid');
+  const hasPost = routes.includes('post');
+  const postCount = routes.filter(r => r === 'post').length;
+  const streakCount = routes.filter(r => r === 'streak').length;
+  const slantCount = routes.filter(r => r === 'slant').length;
+  const dragCount = routes.filter(r => r === 'drag').length;
+  const flatCount = routes.filter(r => r === 'flat').length;
+  const curlCount = routes.filter(r => r === 'curl').length;
+  const hitchCount = routes.filter(r => r === 'hitch').length;
+  const outCount = routes.filter(r => r === 'out').length;
+  const cornerCount = routes.filter(r => r === 'corner').length;
+  const seamCount = routes.filter(r => r === 'seam').length;
+  const digCount = routes.filter(r => r === 'dig').length;
+  const uniqueRoutes = [...new Set(routes)];
+
+  let state = 'ok', reason = '', read = '', pick = '';
+
+  if (coverName === 'Cover 1') {
+    // Cover 1: 3 man + 1 FS. 1 WR free. FS sits middle deep.
+    // Key: find the free WR. Avoid POST into FS.
+    if (slantCount + dragCount >= 3) {
+      state = 'beat'; reason = `${slantCount+dragCount}条横穿路线淹没3个man defender，quick release打man`;
+      read = '3人盯4人→找到没人盯的WR。如果全是slant/drag，quick game不给man defender反应时间';
+      pick = '找最远离man defender的WR，或者没人盯的那个。Bullet出手';
+    } else if (flatCount + dragCount >= 2 && deepRoutes.length >= 1) {
+      state = 'beat'; reason = 'underneath路线拉FS上步 + deep路线攻击FS离开后的空间';
+      read = '先看FS：如果FS读underneath上步→传deep。如果FS留在deep→传underneath给free WR';
+      pick = '第一读：没人盯的WR。第二读：FS的动向决定high/low选择';
+    } else if (postCount >= 2) {
+      state = 'beat'; reason = 'Double Post：一条post吃掉FS注意力，另一条post进入中路真空';
+      read = 'FS只能跟一条post→传另一条。两条post让FS左右为难';
+      pick = '看FS偏向哪条post，传另一条。FS不动就传更open的那条';
+    } else if (streakCount >= 3) {
+      state = 'beat'; reason = `${streakCount}条go route淹没3个man+FS，至少1条没人盯`;
+      read = '3人盯4条go→必有1条free。FS只能帮一侧';
+      pick = '找到没人盯的go route直接传。FS去了左边就传右边';
+    } else if (curlCount >= 3 || hitchCount >= 3) {
+      state = 'beat'; reason = `${curlCount+hitchCount}条underneath路线淹没3人man，空间充足`;
+      read = '多条underneath → man defender跟不过来。找到free WR的curl/hitch';
+      pick = '没人盯的WR无论跑什么都是open。优先传他';
+    } else if (postCount === 1 && deepRoutes.length <= 2 && shortRoutes.length <= 1) {
+      state = 'bad'; reason = '单条POST直飞FS面前，没有足够underneath拉开FS';
+      read = 'FS坐中路等POST→高风险。没有underneath配合无法制造high/low conflict';
+      pick = '避免传POST。找被man盯的WR中分离最大的，或者没人盯的WR';
+    } else {
+      state = 'ok'; reason = '混合路线，可以打但不是最优';
+      read = '先找没人盯的WR(3盯4必有一个free)，然后读FS方向';
+      pick = '第一读永远是free WR';
+    }
+  }
+
+  else if (coverName === 'Cover 2') {
+    // Cover 2: 2 deep + 2 flat. Middle deep is gap.
+    if (seamCount >= 1 || (postCount >= 1 && flatCount >= 1)) {
+      state = 'beat';
+      if (seamCount >= 1) reason = 'Seam route直插两个safety之间的中路缝隙——Cover 2的致命弱点';
+      else reason = 'Post攻击中路缝隙 + Flat吸住flat defender = high/low拉开防守';
+      read = '两个safety分守两侧deep→中路是缝隙。Flat defender守短区→用flat吸住他';
+      pick = '第一读：seam/post（中路缝隙）。如果safety squeeze中路→传corner/out到边线';
+    } else if (streakCount >= 3) {
+      state = 'beat'; reason = `${streakCount}条go route vs 2个safety，数量优势。至少1条deep没人`;
+      read = '2个safety守3-4条deep→至少1条没人盯';
+      pick = '找到没有safety覆盖的那条go route';
+    } else if (cornerCount >= 1 && (hitchCount >= 1 || flatCount >= 1)) {
+      state = 'beat'; reason = 'Smash concept: hitch/flat吸住flat defender上步 → corner到他身后deep';
+      read = 'Flat defender跟hitch→corner open。Flat defender退守corner→hitch open。高低二选一';
+      pick = '读flat defender：他上步跟short→传corner。他退守deep→传hitch/flat';
+    } else if (deepRoutes.length === 0) {
+      state = 'bad'; reason = '没有deep路线无法攻击Cover 2的中路缝隙，只能在flat defender面前打短传';
+      read = '2个flat defender守underneath，你没有deep威胁→他们可以放心守短区';
+      pick = '只能在flat defender之间找缝隙，效率低';
+    } else if (postCount >= 2) {
+      state = 'beat'; reason = 'Double Post攻击两个safety之间的缝隙，safety只能选一边';
+      read = '两条post从两侧切入中路→safety左右为难';
+      pick = '看safety偏向哪侧，传另一条post';
+    } else {
+      state = 'ok'; reason = '有攻击中路的可能但不是最优';
+      read = '找中路缝隙机会，同时注意flat defender位置';
+      pick = '有seam/post就传中路，没有就找underneath空间';
+    }
+  }
+
+  else if (coverName === 'Cover 3') {
+    // Cover 3: 3 deep + 1 flat. Underneath has only 1 flat defender.
+    if ((curlCount >= 1 || outCount >= 1) && flatCount >= 1) {
+      state = 'beat'; reason = 'Curl-Flat/Levels concept: 1个flat defender要守curl和flat两个区域→二选一';
+      read = '1个flat defender守整个25码短区→不可能同时覆盖curl和flat';
+      pick = '读flat defender：他跟flat→传curl。他跟curl→传flat。这是Cover 3的经典破解';
+    } else if (flatCount + curlCount + hitchCount >= 3) {
+      state = 'beat'; reason = `${shortRoutes.length}条underneath路线淹没1个flat defender`;
+      read = '1人守underneath vs 多条短路线→defender顾此失彼';
+      pick = '传离flat defender最远的underneath路线';
+    } else if (digCount >= 1) {
+      state = 'beat'; reason = 'Dig route(10码横穿)穿过underneath进入两个deep zone之间';
+      read = 'Dig在中间深度横穿→flat defender够不到，deep defender太高→dig在缝隙中停下来';
+      pick = '等dig跑完横穿到zone之间再出手';
+    } else if (deepRoutes.length >= 3 && shortRoutes.length === 0) {
+      state = 'bad'; reason = '3人守deep + 0条underneath路线→deep全被覆盖，没有短传出路';
+      read = '3个deep defender覆盖deep zone，你没有underneath选项→被锁死';
+      pick = '没有underneath check down非常危险';
+    } else if (streakCount >= 3) {
+      state = 'ok'; reason = '3条go vs 3人deep，数量上不占优势，但可能在边线找到缝隙';
+      read = '3 deep vs 3 go是1对1，需要WR速度优势才能甩开';
+      pick = '找到deep defender覆盖最弱的边线';
+    } else {
+      state = 'ok'; reason = '混合路线，需要读flat defender做underneath选择';
+      read = 'flat defender的位置决定underneath哪里有空间';
+      pick = '读flat defender方向→传反方向的underneath';
+    }
+  }
+
+  else if (coverName === 'Cover 4') {
+    // Cover 4: 4 deep. Underneath completely empty.
+    if (shortRoutes.length >= 2) {
+      state = 'beat'; reason = `${shortRoutes.length}条短路线 vs underneath无人防守 = 免费接球`;
+      read = '4人全在deep→underneath完全空。任何short route都是open';
+      pick = '随便选一条short route，全是open的。优先选空间最大的';
+    } else if (dragCount >= 1 || slantCount >= 1) {
+      state = 'beat'; reason = 'Drag/Slant在underneath无人区横穿→完全open';
+      read = 'underneath真空→drag/slant跑出3码就没人了';
+      pick = '传drag/slant，guaranteed catch';
+    } else if (shortRoutes.length === 0 && midRoutes.length === 0) {
+      state = 'bad'; reason = '全deep路线 vs 4人守deep→正中Cover 4下怀，一条都打不开';
+      read = '4人deep各守1/4→每条deep route都有人。这是Cover 4想让你做的';
+      pick = '没有underneath选项=被Cover 4完美克制';
+    } else if (midRoutes.length >= 1 && shortRoutes.length === 0) {
+      state = 'ok'; reason = 'mid路线在underneath和deep之间的模糊地带，有机会但不最优';
+      read = 'out/dig在中间深度，deep defender可能下来覆盖';
+      pick = '传out/dig要快出手，趁deep defender还没下来';
+    } else {
+      state = 'ok'; reason = '有一些underneath选项但不多';
+      read = '找到short route的位置→那就是你的答案';
+      pick = '有short就传short，Cover 4下underneath都是open的';
+    }
+  }
+
+  else if (coverName === 'Man Blitz') {
+    // Man Blitz: 4 man + fast rush. Need quick release.
+    if (slantCount >= 2 || (slantCount >= 1 && dragCount >= 1)) {
+      state = 'beat'; reason = `Quick release: ${slantCount}条slant + ${dragCount}条drag，1步出手打man转身`;
+      read = 'DB全背对QB跟人→slant/drag利用DB转身瞬间。Rusher来之前必须出手';
+      pick = 'Pre-snap锁定最近的slant/drag→snap后1步直接bullet出手';
+    } else if (flatCount >= 1 && shortRoutes.length >= 2) {
+      state = 'beat'; reason = 'Hot route(flat) + 多条短路线，快出手躲blitz';
+      read = 'Flat是最快完成的路线→hot read。Man defender跟不住快速横移';
+      pick = '第一读：flat(最快)。第二读：其他short route。不超过2秒出手';
+    } else if (deepRoutes.length >= 3 && shortRoutes.length === 0) {
+      state = 'bad'; reason = '全deep路线 vs 快速冲传 = 球还没到deep WR就被sack了';
+      read = 'Deep需要4秒+，blitz下rusher 2秒就到→deep是自杀';
+      pick = '没有short option = 无法在rush count内出手';
+    } else if (shortRoutes.length >= 1) {
+      state = 'ok'; reason = '有短传出路但不是专门对blitz设计的';
+      read = 'Pre-snap识别blitz→心里锁定short route作为hot read';
+      pick = '传最快完成的short route。Bullet出手';
+    } else {
+      state = 'ok'; reason = '混合路线，需要快速读防找open man';
+      read = '所有DB跟人背对QB→quick route都有机会';
+      pick = '传最快到位的WR。不要等deep route跑完';
+    }
+  }
+
+  return { state, reason, read, pick };
+}
+
 let data = {}; // { 'Cover 1': { 'Shotgun Spread': {state:'beat'|'ok'|'bad', reason:'', notes:[]} } }
 let currentCover = 'Cover 1';
 let expandedIdx = -1;
@@ -268,11 +438,20 @@ let expandedIdx = -1;
 function init() {
   const saved = localStorage.getItem('qb_admin_v2');
   if (saved) { data = JSON.parse(saved); }
-  // Ensure all entries exist
+  // Ensure all entries exist, pre-populate with AI analysis
   for (const cover of Object.keys(COVERAGES)) {
     if (!data[cover]) data[cover] = {};
     for (const f of FORMATIONS) {
-      if (!data[cover][f.name]) data[cover][f.name] = { state: 'ok', reason: '', notes: [] };
+      if (!data[cover][f.name]) {
+        const ai = analyzeMatchup(cover, f);
+        data[cover][f.name] = { state: ai.state, reason: ai.reason, aiRead: ai.read, aiPick: ai.pick, notes: [] };
+      }
+      // Always refresh AI analysis (but don't overwrite user state/reason)
+      const ai = analyzeMatchup(cover, f);
+      data[cover][f.name].aiRead = ai.read;
+      data[cover][f.name].aiPick = ai.pick;
+      data[cover][f.name].aiState = ai.state;
+      data[cover][f.name].aiReason = ai.reason;
     }
   }
   renderTabs();
@@ -327,7 +506,7 @@ function render() {
       <div class="c-diagram"><canvas width="100" height="70" id="dia_${idx}"></canvas></div>
       <div class="c-name">${f.name}</div>
       <div class="c-routes">${routeHTML}</div>
-      <div class="c-reason">${d.reason || ''}</div>
+      <div class="c-reason">${d.reason || d.aiReason || ''}</div>
     `;
     row.onclick = (e) => {
       if (e.target.closest('.detail')) return;
@@ -347,19 +526,27 @@ function render() {
       detail.className = 'detail show';
       const routeChips = f.routes.map(r => `<span class="route-chip ${ROUTE_TYPE[r]||'mid'}">${r.toUpperCase()}</span>`).join('');
       const notesHTML = (d.notes || []).map(n => `<div class="note"><span class="from">${n.from}</span>: <span class="msg">${n.msg}</span></div>`).join('');
+      const aiMatch = d.state === d.aiState;
+      const aiTag = aiMatch ? '<span style="color:#8f8;font-size:10px">✓ 与你一致</span>' : `<span style="color:#fc8;font-size:10px">⚠ AI判断: ${d.aiState==='beat'?'✅克制':d.aiState==='bad'?'❌避免':'⚪中性'}</span>`;
       detail.innerHTML = `
-        <div class="detail-title">${f.name} vs ${currentCover}</div>
+        <div class="detail-title">${f.name} vs ${currentCover} ${aiTag}</div>
         <div class="detail-routes">${routeChips}</div>
+        <div style="background:#1a1a3e;border:1px solid #4a4a6e;border-radius:6px;padding:10px;margin:8px 0;font-size:12px;">
+          <div style="color:#c8a85c;font-weight:bold;margin-bottom:4px">🤖 系统分析</div>
+          <div style="color:#aaa;margin-bottom:4px"><b style="color:#8af">判断:</b> ${d.aiState==='beat'?'✅克制':d.aiState==='bad'?'❌避免':'⚪中性'} — ${d.aiReason||''}</div>
+          <div style="color:#aaa;margin-bottom:4px"><b style="color:#8af">读防顺序:</b> ${d.aiRead||''}</div>
+          <div style="color:#aaa"><b style="color:#8af">最优选择:</b> ${d.aiPick||''}</div>
+        </div>
         <div style="margin-bottom:8px">
           <button class="btn-sm btn-beat" onclick="setState('${f.name}','beat',event)">✅ 克制</button>
           <button class="btn-sm btn-ok" onclick="setState('${f.name}','ok',event)">⚪ 中性</button>
           <button class="btn-sm btn-bad" onclick="setState('${f.name}','bad',event)">❌ 避免</button>
         </div>
         <input style="width:100%;background:#1a1a2e;border:1px solid #555;border-radius:4px;color:#e0e0e0;padding:6px;font-size:12px;"
-          placeholder="为什么这个concept克制/不克制这个防守？"
+          placeholder="你的判断原因（会覆盖AI的）"
           value="${d.reason || ''}" onchange="setReason('${f.name}',this.value)">
         <div class="note-list">${notesHTML}</div>
-        <textarea id="note_${idx}" placeholder="添加讨论..."></textarea>
+        <textarea id="note_${idx}" placeholder="不同意？说说你的看法..."></textarea>
         <button class="btn-sm btn-note" onclick="addNote('${f.name}',${idx},event)">发送</button>
       `;
       el.appendChild(detail);
